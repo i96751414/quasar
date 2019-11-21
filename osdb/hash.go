@@ -17,7 +17,7 @@ func Hash(r io.ReaderAt, size int64) (string, error) {
 	var hash uint64
 
 	if size < chunkSize*2 {
-		return "", errors.New("File is too small")
+		return "", errors.New("file is too small")
 	}
 
 	// Read head and tail blocks.

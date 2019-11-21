@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
-	"github.com/scakemyer/quasar/config"
+	"github.com/i96751414/quasar/config"
 )
+
+var pingTimeout = 100 * time.Millisecond
 
 func LocalIP() (net.IP, error) {
 	ifaces, err := net.Interfaces()
@@ -25,6 +28,8 @@ func LocalIP() (net.IP, error) {
 				ip = v.IP
 			case *net.IPAddr:
 				ip = v.IP
+			default:
+				continue
 			}
 			v4 := ip.To4()
 			if v4 != nil && (v4[0] == 192 || v4[0] == 172 || v4[0] == 10) {

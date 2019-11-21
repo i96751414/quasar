@@ -1,23 +1,23 @@
 package main
 
 import (
+	"net/http"
 	"os"
-	"time"
-	"strings"
+	"path/filepath"
 	"runtime"
 	"strconv"
-	"net/http"
-	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/boltdb/bolt"
+	"github.com/i96751414/quasar/api"
+	"github.com/i96751414/quasar/bittorrent"
+	"github.com/i96751414/quasar/config"
+	"github.com/i96751414/quasar/lockfile"
+	"github.com/i96751414/quasar/trakt"
+	"github.com/i96751414/quasar/util"
+	"github.com/i96751414/quasar/xbmc"
 	"github.com/op/go-logging"
-	"github.com/scakemyer/quasar/api"
-	"github.com/scakemyer/quasar/lockfile"
-	"github.com/scakemyer/quasar/bittorrent"
-	"github.com/scakemyer/quasar/config"
-	"github.com/scakemyer/quasar/trakt"
-	"github.com/scakemyer/quasar/util"
-	"github.com/scakemyer/quasar/xbmc"
 )
 
 var log = logging.MustGetLogger("main")
@@ -92,7 +92,7 @@ func makeBTConfiguration(conf *config.Configuration) *bittorrent.BTConfiguration
 
 	if conf.SocksEnabled == true {
 		btConfig.Proxy = &bittorrent.ProxySettings{
-			Type:     conf.ProxyType,
+			Type:     bittorrent.ProxyType(conf.ProxyType + 1),
 			Hostname: conf.SocksHost,
 			Port:     conf.SocksPort,
 			Username: conf.SocksLogin,
@@ -115,7 +115,7 @@ func main() {
 	for _, line := range strings.Split(QuasarLogo, "\n") {
 		log.Debug(line)
 	}
-	log.Infof("Version: %s Go: %s", util.Version[1:len(util.Version) - 1], runtime.Version())
+	log.Infof("Version: %s Go: %s", util.GetVersion(), runtime.Version())
 
 	conf := config.Reload()
 
@@ -132,7 +132,7 @@ func main() {
 
 	db, err := bolt.Open(filepath.Join(conf.Info.Profile, "library.db"), 0600, &bolt.Options{
 		ReadOnly: false,
-		Timeout: 15 * time.Second,
+		Timeout:  15 * time.Second,
 	})
 	if err != nil {
 		log.Error(err)
@@ -163,10 +163,7 @@ func main() {
 	go watchParentProcess()
 
 	http.Handle("/", api.Routes(btService))
-	http.Handle("/files/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handler := http.StripPrefix("/files/", http.FileServer(bittorrent.NewTorrentFS(btService, config.Get().DownloadPath)))
-		handler.ServeHTTP(w, r)
-	}))
+	http.Handle("/files/", bittorrent.ServeTorrent(btService, config.Get().DownloadPath))
 	http.Handle("/reload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		btService.Reconfigure(*makeBTConfiguration(config.Reload()))
 	}))
@@ -189,5 +186,5 @@ func main() {
 	go api.LibraryListener()
 	go trakt.TokenRefreshHandler()
 
-	http.ListenAndServe(":" + strconv.Itoa(config.ListenPort), nil)
+	http.ListenAndServe(":"+strconv.Itoa(config.ListenPort), nil)
 }

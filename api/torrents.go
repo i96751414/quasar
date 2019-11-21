@@ -1,53 +1,50 @@
 package api
 
 import (
-	"os"
-	"fmt"
-	"time"
 	"errors"
-	"strings"
-	"strconv"
-	"unicode"
-	"io/ioutil"
-	"encoding/hex"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"unicode"
 
-	"github.com/op/go-logging"
-	"github.com/gin-gonic/gin"
-	"github.com/dustin/go-humanize"
 	"github.com/cloudflare/ahocorasick"
-	"github.com/scakemyer/libtorrent-go"
-	"github.com/scakemyer/quasar/bittorrent"
-	"github.com/scakemyer/quasar/config"
-	"github.com/scakemyer/quasar/util"
-	"github.com/scakemyer/quasar/xbmc"
-	"github.com/zeebo/bencode"
+	"github.com/dustin/go-humanize"
+	"github.com/gin-gonic/gin"
+	"github.com/i96751414/quasar/bittorrent"
+	"github.com/i96751414/quasar/config"
+	"github.com/i96751414/quasar/util"
+	"github.com/i96751414/quasar/xbmc"
+	"github.com/op/go-logging"
 )
 
 var torrentsLog = logging.MustGetLogger("torrents")
 
 type TorrentsWeb struct {
-	Name         string  `json:"name"`
-	Size         string  `json:"size"`
-	Status       string  `json:"status"`
-	Progress     float64 `json:"progress"`
-	Ratio        float64 `json:"ratio"`
-	TimeRatio    float64 `json:"time_ratio"`
-	SeedingTime  string  `json:"seeding_time"`
-	SeedTime     float64 `json:"seed_time"`
-	SeedTimeLimit    int `json:"seed_time_limit"`
-	DownloadRate float64 `json:"download_rate"`
-	UploadRate   float64 `json:"upload_rate"`
-	Seeders      int     `json:"seeders"`
-	SeedersTotal int     `json:"seeders_total"`
-	Peers        int     `json:"peers"`
-	PeersTotal   int     `json:"peers_total"`
+	Name          string  `json:"name"`
+	Size          string  `json:"size"`
+	Status        string  `json:"status"`
+	Progress      float64 `json:"progress"`
+	Ratio         float64 `json:"ratio"`
+	TimeRatio     float64 `json:"time_ratio"`
+	SeedingTime   string  `json:"seeding_time"`
+	SeedTime      float64 `json:"seed_time"`
+	SeedTimeLimit int     `json:"seed_time_limit"`
+	DownloadRate  float64 `json:"download_rate"`
+	UploadRate    float64 `json:"upload_rate"`
+	Seeders       int     `json:"seeders"`
+	SeedersTotal  int     `json:"seeders_total"`
+	Peers         int     `json:"peers"`
+	PeersTotal    int     `json:"peers_total"`
 }
 
 type TorrentMap struct {
 	tmdbId  string
 	torrent *bittorrent.Torrent
 }
+
 var TorrentsMap []*TorrentMap
 
 func AddToTorrentsMap(tmdbId string, torrent *bittorrent.Torrent) {
@@ -59,7 +56,7 @@ func AddToTorrentsMap(tmdbId string, torrent *bittorrent.Torrent) {
 	}
 	if inTorrentsMap == false {
 		torrentMap := &TorrentMap{
-			tmdbId: tmdbId,
+			tmdbId:  tmdbId,
 			torrent: torrent,
 		}
 		TorrentsMap = append(TorrentsMap, torrentMap)
@@ -72,7 +69,7 @@ func InTorrentsMap(tmdbId string) (torrents []*bittorrent.Torrent) {
 			if xbmc.DialogConfirm("Quasar", "LOCALIZE[30260]") {
 				torrents = append(torrents, torrentMap.torrent)
 			} else {
-				TorrentsMap = append(TorrentsMap[:index], TorrentsMap[index + 1:]...)
+				TorrentsMap = append(TorrentsMap[:index], TorrentsMap[index+1:]...)
 			}
 		}
 	}
@@ -95,21 +92,17 @@ func nameMatch(torrentName string, itemName string) bool {
 }
 
 func ExistingTorrent(btService *bittorrent.BTService, longName string) (existingTorrent string) {
-	btService.Session.GetHandle().GetTorrents()
-	torrentsVector := btService.Session.GetHandle().GetTorrents()
-	torrentsVectorSize := int(torrentsVector.Size())
-
-	for i := 0; i < torrentsVectorSize; i++ {
-		torrentHandle := torrentsVector.Get(i)
-		if torrentHandle.IsValid() == false {
+	for _, torrentHandle := range btService.Torrents {
+		if torrentHandle == nil {
 			continue
 		}
-		torrentStatus := torrentHandle.Status()
-		torrentName := torrentStatus.GetName()
+		info := torrentHandle.Info()
+		if info == nil {
+			continue
+		}
 
-		if nameMatch(torrentName, longName) {
-			shaHash := torrentStatus.GetInfoHash().ToString()
-			infoHash := hex.EncodeToString([]byte(shaHash))
+		if nameMatch(info.Name, longName) {
+			infoHash := torrentHandle.InfoHash().HexString()
 
 			torrentFile := filepath.Join(config.Get().TorrentsPath, fmt.Sprintf("%s.torrent", infoHash))
 			return torrentFile
@@ -120,61 +113,55 @@ func ExistingTorrent(btService *bittorrent.BTService, longName string) (existing
 
 func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		btService.Session.GetHandle().GetTorrents()
-		torrentsVector := btService.Session.GetHandle().GetTorrents()
-		torrentsVectorSize := int(torrentsVector.Size())
-		items := make(xbmc.ListItems, 0, torrentsVectorSize)
+		items := make(xbmc.ListItems, 0, len(btService.Torrents))
 
 		torrentsLog.Info("Currently downloading:")
-		for i := 0; i < torrentsVectorSize; i++ {
-			torrentHandle := torrentsVector.Get(i)
-			if torrentHandle.IsValid() == false {
+		for i, torrentHandle := range btService.Torrents {
+			if torrentHandle == nil {
+				continue
+			}
+			info := torrentHandle.Info()
+			if info == nil {
 				continue
 			}
 
-			torrentStatus := torrentHandle.Status()
-
-			torrentName := torrentStatus.GetName()
-			progress := float64(torrentStatus.GetProgress()) * 100
-			status := bittorrent.StatusStrings[int(torrentStatus.GetState())]
+			torrentName := info.Name
+			progress := torrentHandle.GetProgress()
+			stats := torrentHandle.AllStats()
 
 			ratio := float64(0)
-			allTimeDownload := float64(torrentStatus.GetAllTimeDownload())
+			allTimeDownload := stats.BytesReadData.Int64()
 			if allTimeDownload > 0 {
-				ratio = float64(torrentStatus.GetAllTimeUpload()) / allTimeDownload
+				ratio = float64(stats.BytesWrittenData.Int64()*100) / float64(allTimeDownload)
 			}
 
 			timeRatio := float64(0)
-			finishedTime := float64(torrentStatus.GetFinishedTime())
-			downloadTime := float64(torrentStatus.GetActiveTime()) - finishedTime
+			finishedTime := stats.FinishedTime
+			downloadTime := stats.ActiveTime - finishedTime
 			if downloadTime > 1 {
 				timeRatio = finishedTime / downloadTime
 			}
 
-			seedingTime := time.Duration(torrentStatus.GetSeedingTime()) * time.Second
-			if progress == 100 && seedingTime == 0 {
+			seedingTime := time.Duration(stats.SeedingTime) * time.Second
+			if progress >= 100 && seedingTime == 0 {
 				seedingTime = time.Duration(finishedTime) * time.Second
 			}
 
-			torrentAction := []string{"LOCALIZE[30231]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/pause/%d", i))}
-			sessionAction := []string{"LOCALIZE[30233]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/pause"))}
+			//sessionAction := []string{"LOCALIZE[30233]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/pause"))}
 
-			if btService.Session.GetHandle().IsPaused() {
-				status = "Paused"
-				sessionAction = []string{"LOCALIZE[30234]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/resume"))}
-			} else if torrentStatus.GetPaused() && status != "Finished" {
-				if progress == 100 {
+			var torrentAction []string
+			status := bittorrent.StatusStrings[torrentHandle.GetState()]
+			if status == "Paused" {
+				if progress >= 100 {
 					status = "Finished"
-				} else {
-					status = "Paused"
 				}
 				torrentAction = []string{"LOCALIZE[30235]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/resume/%d", i))}
-			} else if !torrentStatus.GetPaused() && (status == "Finished" || progress == 100) {
-				status = "Seeding"
+			} else {
+				torrentAction = []string{"LOCALIZE[30231]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/pause/%d", i))}
 			}
 
 			color := "white"
-			switch (status) {
+			switch status {
 			case "Paused":
 				fallthrough
 			case "Finished":
@@ -188,22 +175,18 @@ func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 			case "Checking":
 				color = "teal"
 			case "Queued":
-			case "Allocating":
 				color = "black"
-			case "Stalled":
-				color = "red"
 			}
 			torrentsLog.Infof("- %.2f%% - %s - %.2f:1 / %.2f:1 (%s) - %s", progress, status, ratio, timeRatio, seedingTime.String(), torrentName)
 
 			var (
-				tmdb string
-				show string
-				season string
-				episode string
+				tmdb        string
+				show        string
+				season      string
+				episode     string
 				contentType string
 			)
-			shaHash := torrentStatus.GetInfoHash().ToString()
-			infoHash := hex.EncodeToString([]byte(shaHash))
+			infoHash := torrentHandle.InfoHash().HexString()
 			dbItem := btService.GetDBItem(infoHash)
 			if dbItem != nil && dbItem.Type != "" {
 				contentType = dbItem.Type
@@ -226,18 +209,18 @@ func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 
 			item := xbmc.ListItem{
 				Label: fmt.Sprintf("%.2f%% - [COLOR %s]%s[/COLOR] - %.2f:1 / %.2f:1 (%s) - %s", progress, color, status, ratio, timeRatio, seedingTime.String(), torrentName),
-				Path: playUrl,
+				Path:  playUrl,
 				Info: &xbmc.ListItemInfo{
 					Title: torrentName,
 				},
 			}
 			item.ContextMenu = [][]string{
-				[]string{"LOCALIZE[30230]", fmt.Sprintf("XBMC.PlayMedia(%s)", playUrl)},
+				{"LOCALIZE[30230]", fmt.Sprintf("XBMC.PlayMedia(%s)", playUrl)},
 				torrentAction,
-				[]string{"LOCALIZE[30232]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/delete/%d", i))},
-				[]string{"LOCALIZE[30276]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/delete/%d?files=1", i))},
-				[]string{"LOCALIZE[30308]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/move/%d", i))},
-				sessionAction,
+				{"LOCALIZE[30232]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/delete/%d", i))},
+				{"LOCALIZE[30276]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/delete/%d?files=1", i))},
+				{"LOCALIZE[30308]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/move/%d", i))},
+				//sessionAction,
 			}
 			item.IsPlayable = true
 			items = append(items, &item)
@@ -249,81 +232,67 @@ func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 
 func ListTorrentsWeb(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		btService.Session.GetHandle().GetTorrents()
-		torrentsVector := btService.Session.GetHandle().GetTorrents()
-		torrentsVectorSize := int(torrentsVector.Size())
-		torrents := make([]*TorrentsWeb, 0, torrentsVectorSize)
+		torrents := make([]*TorrentsWeb, 0, len(btService.Torrents))
 		seedTimeLimit := config.Get().SeedTimeLimit
 
-		for i := 0; i < torrentsVectorSize; i++ {
-			torrentHandle := torrentsVector.Get(i)
-			if torrentHandle.IsValid() == false {
+		for _, torrentHandle := range btService.Torrents {
+			if torrentHandle == nil {
+				continue
+			}
+			info := torrentHandle.Info()
+			if info == nil {
 				continue
 			}
 
-			torrentStatus := torrentHandle.Status()
+			torrentName := info.Name
+			progress := torrentHandle.GetProgress()
 
-			torrentName := torrentStatus.GetName()
-			progress := float64(torrentStatus.GetProgress()) * 100
-
-			status := bittorrent.StatusStrings[int(torrentStatus.GetState())]
-			if btService.Session.GetHandle().IsPaused() {
-				status = "Paused"
-			} else if torrentStatus.GetPaused() && status != "Finished" {
-				if progress == 100 {
+			status := bittorrent.StatusStrings[torrentHandle.GetState()]
+			if status == "Paused" {
+				if progress >= 100 {
 					status = "Finished"
-				} else {
-					status = "Paused"
 				}
-			} else if !torrentStatus.GetPaused() && (status == "Finished" || progress == 100) {
-				status = "Seeding"
 			}
 
+			stats := torrentHandle.AllStats()
 			ratio := float64(0)
-			allTimeDownload := float64(torrentStatus.GetAllTimeDownload())
+			allTimeDownload := stats.BytesReadData.Int64()
 			if allTimeDownload > 0 {
-				ratio = float64(torrentStatus.GetAllTimeUpload()) / allTimeDownload
+				ratio = float64(stats.BytesWrittenData.Int64()*100) / float64(allTimeDownload)
 			}
 
 			timeRatio := float64(0)
-			finishedTime := float64(torrentStatus.GetFinishedTime())
-			downloadTime := float64(torrentStatus.GetActiveTime()) - finishedTime
+			finishedTime := stats.FinishedTime
+			downloadTime := stats.ActiveTime - finishedTime
 			if downloadTime > 1 {
 				timeRatio = finishedTime / downloadTime
 			}
-			seedingTime := time.Duration(torrentStatus.GetSeedingTime()) * time.Second
-			if progress == 100 && seedingTime == 0 {
+
+			seedingTime := time.Duration(stats.SeedingTime) * time.Second
+			if progress >= 100 && seedingTime == 0 {
 				seedingTime = time.Duration(finishedTime) * time.Second
 			}
 
-			torrentInfo := torrentHandle.TorrentFile()
-			size := ""
-			if torrentInfo != nil && torrentInfo.Swigcptr() != 0 {
-				size = humanize.Bytes(uint64(torrentInfo.TotalSize()))
-			}
-			downloadRate := float64(torrentStatus.GetDownloadRate()) / 1024
-			uploadRate := float64(torrentStatus.GetUploadRate()) / 1024
-			seeders := torrentStatus.GetNumSeeds()
-			seedersTotal := torrentStatus.GetNumComplete()
-			peers := torrentStatus.GetNumPeers() - seeders
-			peersTotal := torrentStatus.GetNumIncomplete()
+			size := humanize.Bytes(uint64(info.Length))
+			downloadRate := stats.DownloadRate / 1024
+			uploadRate := stats.UploadRate / 1024
 
 			torrent := TorrentsWeb{
-				Name: torrentName,
-				Size: size,
-				Status: status,
-				Progress: progress,
-				Ratio: ratio,
-				TimeRatio: timeRatio,
-				SeedingTime: seedingTime.String(),
-				SeedTime: seedingTime.Seconds(),
+				Name:          torrentName,
+				Size:          size,
+				Status:        status,
+				Progress:      progress,
+				Ratio:         ratio,
+				TimeRatio:     timeRatio,
+				SeedingTime:   seedingTime.String(),
+				SeedTime:      seedingTime.Seconds(),
 				SeedTimeLimit: seedTimeLimit,
-				DownloadRate: downloadRate,
-				UploadRate: uploadRate,
-				Seeders: seeders,
-				SeedersTotal: seedersTotal,
-				Peers: peers,
-				PeersTotal: peersTotal,
+				DownloadRate:  downloadRate,
+				UploadRate:    uploadRate,
+				Seeders:       stats.ConnectedSeeders,
+				SeedersTotal:  stats.TotalSeeders,
+				Peers:         stats.ConnectedIncompletePeers,
+				PeersTotal:    stats.TotalIncompletePeers,
 			}
 			torrents = append(torrents, &torrent)
 		}
@@ -333,9 +302,9 @@ func ListTorrentsWeb(btService *bittorrent.BTService) gin.HandlerFunc {
 	}
 }
 
-func PauseSession(btService *bittorrent.BTService) gin.HandlerFunc {
+/*func PauseSession(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		btService.Session.GetHandle().Pause()
+		btService.client.GetHandle().Pause()
 		xbmc.Refresh()
 		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		ctx.String(200, "")
@@ -344,12 +313,12 @@ func PauseSession(btService *bittorrent.BTService) gin.HandlerFunc {
 
 func ResumeSession(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		btService.Session.GetHandle().Resume()
+		btService.client.GetHandle().Resume()
 		xbmc.Refresh()
 		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		ctx.String(200, "")
 	}
-}
+}*/
 
 func AddTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
@@ -358,102 +327,15 @@ func AddTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 
 		if uri == "" {
 			ctx.String(404, "Missing torrent URI")
+			return
 		}
 		torrentsLog.Infof("Adding torrent from %s", uri)
 
-		if config.Get().DownloadPath == "." {
-			xbmc.Notify("Quasar", "LOCALIZE[30113]", config.AddonIcon())
-			ctx.String(404, "Download path empty")
+		_, err := btService.AddTorrent(uri)
+		if err != nil {
+			ctx.String(404, err.Error())
 			return
 		}
-
-		torrentParams := libtorrent.NewAddTorrentParams()
-		defer libtorrent.DeleteAddTorrentParams(torrentParams)
-
-		var infoHash string
-
-		loadFromFile := false
-		torrent := bittorrent.NewTorrent(uri)
-		if strings.HasPrefix(uri, "magnet") || strings.HasPrefix(uri, "http") {
-			if torrent.IsMagnet() {
-				torrent.Magnet()
-				torrentsLog.Infof("Parsed magnet: %s", torrent.URI)
-				if err := torrent.IsValidMagnet(); err == nil {
-					torrentParams.SetUrl(torrent.URI)
-				} else {
-					ctx.String(404, err.Error())
-					return
-				}
-			} else {
-				if err := torrent.Resolve(); err == nil {
-					loadFromFile = true
-				} else {
-					ctx.String(404, err.Error())
-					return
-				}
-			}
-			infoHash = torrent.InfoHash
-		} else {
-			loadFromFile = true
-		}
-
-		if loadFromFile {
-			if _, err := os.Stat(torrent.URI); err != nil {
-				ctx.String(404, err.Error())
-				return
-			}
-
-			file, err := os.Open(torrent.URI)
-			if err != nil {
-				ctx.String(404, err.Error())
-				return
-			}
-			dec := bencode.NewDecoder(file)
-			var torrentFile *bittorrent.TorrentFileRaw
-			if err := dec.Decode(&torrentFile); err != nil {
-				errMsg := fmt.Sprintf("Invalid torrent file %s, failed to decode with: %s", torrent.URI, err.Error())
-				torrentsLog.Error(errMsg)
-				ctx.String(404, errMsg)
-				return
-			}
-
-			info := libtorrent.NewTorrentInfo(torrent.URI)
-			torrentParams.SetTorrentInfo(info)
-
-			shaHash := info.InfoHash().ToString()
-			infoHash = hex.EncodeToString([]byte(shaHash))
-		}
-
-		torrentsLog.Infof("Setting save path to %s", config.Get().DownloadPath)
-		torrentParams.SetSavePath(config.Get().DownloadPath)
-
-		torrentsLog.Infof("Checking for fast resume data in %s.fastresume", infoHash)
-		fastResumeFile := filepath.Join(config.Get().TorrentsPath, fmt.Sprintf("%s.fastresume", infoHash))
-		if _, err := os.Stat(fastResumeFile); err == nil {
-			torrentsLog.Info("Found fast resume data...")
-			fastResumeData, err := ioutil.ReadFile(fastResumeFile)
-			if err != nil {
-				torrentsLog.Error(err.Error())
-				ctx.String(404, err.Error())
-				return
-			}
-			fastResumeVector := libtorrent.NewStdVectorChar()
-			defer libtorrent.DeleteStdVectorChar(fastResumeVector)
-			for _, c := range fastResumeData {
-				fastResumeVector.Add(c)
-			}
-			torrentParams.SetResumeData(fastResumeVector)
-		}
-
-		torrentHandle := btService.Session.GetHandle().AddTorrent(torrentParams)
-
-		if torrentHandle == nil {
-			ctx.String(404, fmt.Sprintf("Unable to add torrent with URI %s", uri))
-			return
-		}
-
-		torrentsLog.Infof("Downloading %s", uri)
-		btService.SpaceChecked[infoHash] = false
 
 		xbmc.Refresh()
 		ctx.String(200, "")
@@ -462,21 +344,23 @@ func AddTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 
 func ResumeTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		torrentsVector := btService.Session.GetHandle().GetTorrents()
 		torrentId := ctx.Params.ByName("torrentId")
 		torrentIndex, _ := strconv.Atoi(torrentId)
-		torrentHandle := torrentsVector.Get(torrentIndex)
+		torrentHandle := btService.Torrents[torrentIndex]
 
 		if torrentHandle == nil {
 			ctx.Error(errors.New(fmt.Sprintf("Unable to resume torrent with index %d", torrentIndex)))
+			return
 		}
 
-		status := torrentHandle.Status(uint(libtorrent.TorrentHandleQueryName))
+		info := torrentHandle.Info()
+		if info != nil {
+			torrentsLog.Infof("Resuming %s", info.Name)
+		} else {
+			torrentsLog.Infof("Resuming %s", torrentHandle.InfoHash().HexString())
+		}
 
-		torrentName := status.GetName()
-		torrentsLog.Infof("Resuming %s", torrentName)
-
-		torrentHandle.AutoManaged(true)
+		torrentHandle.Resume()
 
 		xbmc.Refresh()
 		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -486,16 +370,20 @@ func ResumeTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 
 func MoveTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		btService.Session.GetHandle().GetTorrents()
-		torrentsVector := btService.Session.GetHandle().GetTorrents()
 		torrentId := ctx.Params.ByName("torrentId")
 		torrentIndex, _ := strconv.Atoi(torrentId)
-		torrentHandle := torrentsVector.Get(torrentIndex)
-		if torrentHandle.IsValid() == false {
+		torrentHandle := btService.Torrents[torrentIndex]
+		if torrentHandle == nil {
 			ctx.Error(errors.New("Invalid torrent handle"))
+			return
 		}
 
-		torrentsLog.Infof("Marking %s to be moved...", torrentHandle.Status(uint(libtorrent.TorrentHandleQueryName)).GetName())
+		info := torrentHandle.Info()
+		if info != nil {
+			torrentsLog.Infof("Marking %s to be moved...", info.Name)
+		} else {
+			torrentsLog.Infof("Marking %s to be moved...", torrentHandle.InfoHash().HexString())
+		}
 		btService.MarkedToMove = torrentIndex
 
 		xbmc.Refresh()
@@ -506,18 +394,21 @@ func MoveTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 
 func PauseTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
-		btService.Session.GetHandle().GetTorrents()
-		torrentsVector := btService.Session.GetHandle().GetTorrents()
 		torrentId := ctx.Params.ByName("torrentId")
 		torrentIndex, _ := strconv.Atoi(torrentId)
-		torrentHandle := torrentsVector.Get(torrentIndex)
-		if torrentHandle.IsValid() == false {
-			ctx.Error(errors.New("Invalid torrent handle"))
+		torrentHandle := btService.Torrents[torrentIndex]
+		if torrentHandle == nil {
+			ctx.Error(errors.New("invalid torrent handle"))
+			return
 		}
 
-		torrentsLog.Infof("Pausing torrent %s", torrentHandle.Status(uint(libtorrent.TorrentHandleQueryName)).GetName())
-		torrentHandle.AutoManaged(false)
-		torrentHandle.Pause(1)
+		info := torrentHandle.Info()
+		if info != nil {
+			torrentsLog.Infof("Pausing torrent %s", info.Name)
+		} else {
+			torrentsLog.Infof("Pausing torrent %s", torrentHandle.InfoHash().HexString())
+		}
+		torrentHandle.Pause()
 
 		xbmc.Refresh()
 		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "*")
@@ -533,16 +424,13 @@ func RemoveTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 
 		torrentsPath := config.Get().TorrentsPath
 
-		btService.Session.GetHandle().GetTorrents()
-		torrentsVector := btService.Session.GetHandle().GetTorrents()
-		torrentHandle := torrentsVector.Get(torrentIndex)
-		if torrentHandle.IsValid() == false {
+		torrentHandle := btService.Torrents[torrentIndex]
+		if torrentHandle == nil {
 			ctx.Error(errors.New("Invalid torrent handle"))
+			return
 		}
 
-		torrentStatus := torrentHandle.Status(uint(libtorrent.TorrentHandleQuerySavePath) | uint(libtorrent.TorrentHandleQueryName))
-		shaHash := torrentStatus.GetInfoHash().ToString()
-		infoHash := hex.EncodeToString([]byte(shaHash))
+		infoHash := torrentHandle.InfoHash().HexString()
 
 		// Delete torrent file
 		torrentFile := filepath.Join(torrentsPath, fmt.Sprintf("%s.torrent", infoHash))
@@ -570,12 +458,10 @@ func RemoveTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 
 		if config.Get().KeepFilesAfterStop == false || askedToDelete == true || deleteFiles == "true" {
 			torrentsLog.Info("Removing the torrent and deleting files...")
-			btService.Session.GetHandle().RemoveTorrent(torrentHandle, int(libtorrent.SessionHandleDeleteFiles))
-			partsFile := filepath.Join(config.Get().DownloadPath, fmt.Sprintf(".%s.parts", infoHash))
-			defer os.Remove(partsFile)
+			btService.RemoveTorrent(torrentHandle, true)
 		} else {
 			torrentsLog.Info("Removing the torrent without deleting files...")
-			btService.Session.GetHandle().RemoveTorrent(torrentHandle, 0)
+			btService.RemoveTorrent(torrentHandle, true)
 		}
 
 		xbmc.Refresh()
@@ -587,14 +473,12 @@ func RemoveTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 func Versions(btService *bittorrent.BTService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		type Versions struct {
-			Version    string `json:"version"`
-			Libtorrent string `json:"libtorrent"`
-			UserAgent  string `json:"user-agent"`
+			Version   string `json:"version"`
+			UserAgent string `json:"user-agent"`
 		}
 		versions := Versions{
-			Version:    util.Version[1:len(util.Version) - 1],
-			Libtorrent: libtorrent.Version(),
-			UserAgent:  btService.UserAgent,
+			Version:   util.GetVersion(),
+			UserAgent: btService.UserAgent,
 		}
 		ctx.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		ctx.JSON(200, versions)

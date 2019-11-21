@@ -109,7 +109,7 @@ func (c *clientCodec) Close() error {
 	return c.c.Close()
 }
 
-// NewClient returns a new rpc.Client to handle requests to the
+// NewClient returns a new rpc.client to handle requests to the
 // set of services at the other end of the connection.
 func NewClient(conn io.ReadWriteCloser) *rpc.Client {
 	return rpc.NewClientWithCodec(NewClientCodec(conn))

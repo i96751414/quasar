@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/op/go-logging"
-	"github.com/scakemyer/quasar/xbmc"
+	"github.com/i96751414/quasar/xbmc"
 )
 
 var log = logging.MustGetLogger("config")

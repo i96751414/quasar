@@ -7,8 +7,8 @@ import (
 	"math/rand"
 
 	"github.com/jmcvetta/napping"
-	"github.com/scakemyer/quasar/xbmc"
-	"github.com/scakemyer/quasar/config"
+	"github.com/i96751414/quasar/xbmc"
+	"github.com/i96751414/quasar/config"
 )
 
 var (

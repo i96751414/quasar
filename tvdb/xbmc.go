@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/scakemyer/quasar/xbmc"
+	"github.com/i96751414/quasar/xbmc"
 )
 
 func imageURL(path string) string {

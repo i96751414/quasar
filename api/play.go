@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"encoding/hex"
 
 	"github.com/gin-gonic/gin"
-	"github.com/scakemyer/quasar/bittorrent"
-	"github.com/scakemyer/libtorrent-go"
-	"github.com/scakemyer/quasar/util"
-	"github.com/scakemyer/quasar/xbmc"
+	"github.com/i96751414/quasar/bittorrent"
+	"github.com/i96751414/quasar/util"
+	"github.com/i96751414/quasar/xbmc"
 )
 
 func Play(btService *bittorrent.BTService) gin.HandlerFunc {
@@ -127,15 +125,11 @@ func PlayURI(btService *bittorrent.BTService) gin.HandlerFunc {
 				episode string
 				contentType string
 			)
-			torrentsVector := btService.Session.GetHandle().GetTorrents()
 			resumeIndex, _ := strconv.Atoi(resume)
-			torrentHandle := torrentsVector.Get(resumeIndex)
+			torrentHandle := btService.Torrents[resumeIndex]
 
-			if torrentHandle.IsValid() {
-				status := torrentHandle.Status(uint(libtorrent.TorrentHandleQueryName))
-				shaHash := status.GetInfoHash().ToString()
-				infoHash := hex.EncodeToString([]byte(shaHash))
-				dbItem := btService.GetDBItem(infoHash)
+			if torrentHandle != nil {
+				dbItem := btService.GetDBItem(torrentHandle.InfoHash().HexString())
 				if dbItem.Type != "" {
 					contentType = dbItem.Type
 					if contentType == "movie" {

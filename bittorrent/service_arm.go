@@ -3,9 +3,8 @@
 package bittorrent
 
 import (
+	lt "github.com/anacrolix/torrent"
 	"runtime"
-
-	"github.com/scakemyer/libtorrent-go"
 )
 
 const (
@@ -17,8 +16,8 @@ const (
 // (or, rather, a single cpu arm machine, no need to be specific to RPi) and
 // set those limits.
 // See https://github.com/steeve/plugin.video.pulsar/issues/24
-func setPlatformSpecificSettings(settings libtorrent.SettingsPack) {
-	if runtime.NumCPU() == 1 { // single core?
-		settings.SetInt(libtorrent.SettingByName("connections_limit"), maxSingleCoreConnections)
+func setPlatformSpecificSettings(c *lt.ClientConfig) {
+	if runtime.NumCPU() == 1 && c.EstablishedConnsPerTorrent > maxSingleCoreConnections {
+		c.EstablishedConnsPerTorrent = maxSingleCoreConnections
 	}
 }

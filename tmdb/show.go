@@ -12,9 +12,9 @@ import (
 	"encoding/json"
 
 	"github.com/jmcvetta/napping"
-	"github.com/scakemyer/quasar/config"
-	"github.com/scakemyer/quasar/cache"
-	"github.com/scakemyer/quasar/xbmc"
+	"github.com/i96751414/quasar/config"
+	"github.com/i96751414/quasar/cache"
+	"github.com/i96751414/quasar/xbmc"
 )
 
 func LogError(err error) {

@@ -9,12 +9,12 @@ import (
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
-	"github.com/scakemyer/quasar/util"
-	"github.com/scakemyer/quasar/cache"
-	"github.com/scakemyer/quasar/config"
-	"github.com/scakemyer/quasar/providers"
-	"github.com/scakemyer/quasar/bittorrent"
-	"github.com/scakemyer/quasar/api/repository"
+	"github.com/i96751414/quasar/util"
+	"github.com/i96751414/quasar/cache"
+	"github.com/i96751414/quasar/config"
+	"github.com/i96751414/quasar/providers"
+	"github.com/i96751414/quasar/bittorrent"
+	"github.com/i96751414/quasar/api/repository"
 )
 
 const (
@@ -52,8 +52,8 @@ func Routes(btService *bittorrent.BTService) *gin.Engine {
 	{
 		torrents.GET("/", ListTorrents(btService))
 		torrents.GET("/add", AddTorrent(btService))
-		torrents.GET("/pause", PauseSession(btService))
-		torrents.GET("/resume", ResumeSession(btService))
+		//torrents.GET("/pause", PauseSession(btService))
+		//torrents.GET("/resume", ResumeSession(btService))
 		torrents.GET("/move/:torrentId", MoveTorrent(btService))
 		torrents.GET("/pause/:torrentId", PauseTorrent(btService))
 		torrents.GET("/resume/:torrentId", ResumeTorrent(btService))

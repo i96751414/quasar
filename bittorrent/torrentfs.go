@@ -1,6 +1,68 @@
 package bittorrent
 
 import (
+	lt "github.com/anacrolix/torrent"
+	"github.com/op/go-logging"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+var tfsLog = logging.MustGetLogger("torrentfs")
+
+func serveTorrent(file *lt.File, sequential bool, w http.ResponseWriter, r *http.Request) {
+	entry, err := NewFileReader(file, sequential)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	defer func() {
+		if err := entry.Close(); err != nil {
+			tfsLog.Errorf("Error closing file reader: %s\n", err)
+		}
+	}()
+
+	//w.Header().Set("Connection", "close")
+	//w.Header().Set("ETag", httptoo.EncodeQuotedString(fmt.Sprintf("%s/%s", fr.Torrent.infoHash, url[1:])))
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+file.Torrent().Info().Name+"\"")
+	http.ServeContent(w, r, file.DisplayPath(), time.Now(), entry)
+}
+
+func ServeTorrent(s *BTService, downloadPath string) http.Handler {
+	return http.StripPrefix("/files", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		filePath := filepath.Join(downloadPath, path)
+		file, err := os.Open(filePath)
+		if err != nil {
+			tfsLog.Errorf("Unable to open '%s'", filePath)
+			http.Error(w, "file not found", http.StatusNotFound)
+			return
+		}
+		// make sure we don't open a file that's locked, as it can happen
+		// on BSD systems (darwin included)
+		if err := unlockFile(file); err != nil {
+			tfsLog.Errorf("Unable to unlock file because: %s", err)
+		}
+
+		// Get the torrent
+		for _, torrent := range s.Torrents {
+			for _, f := range torrent.Files() {
+				if path[1:] == f.Path() {
+					tfsLog.Noticef("%s belongs to torrent %s", path, torrent.Name())
+					serveTorrent(f, !isRarArchive(path), w, r)
+					return
+				}
+			}
+		}
+
+		http.Error(w, "file not found", http.StatusNotFound)
+	}))
+}
+
+/*
+import (
 	"os"
 	"time"
 	"sync"
@@ -11,10 +73,10 @@ import (
 	"path/filepath"
 
 	"github.com/op/go-logging"
-	"github.com/scakemyer/libtorrent-go"
-	"github.com/scakemyer/quasar/broadcast"
-	"github.com/scakemyer/quasar/util"
-	"github.com/scakemyer/quasar/xbmc"
+	"github.com/i96751414/libtorrent-go"
+	"github.com/i96751414/quasar/broadcast"
+	"github.com/i96751414/quasar/util"
+	"github.com/i96751414/quasar/xbmc"
 )
 
 const (
@@ -66,7 +128,7 @@ func (tfs *TorrentFS) Open(name string) (http.File, error) {
 
 	tfs.log.Infof("Opening %s", name)
 	// NB: this does NOT return a pointer to vector, no need to free!
-	torrentsVector := tfs.service.Session.GetHandle().GetTorrents()
+	torrentsVector := tfs.service.client.GetHandle().GetTorrents()
 	torrentsVectorSize := int(torrentsVector.Size())
 	for i := 0; i < torrentsVectorSize; i++ {
 		torrentHandle := torrentsVector.Get(i)
@@ -274,3 +336,4 @@ func (tf *TorrentFile) pieceFromOffset(offset int64) (int, int) {
 	pieceOffset := (tf.fileOffset + offset) % int64(tf.pieceLength)
 	return int(piece), int(pieceOffset)
 }
+*/

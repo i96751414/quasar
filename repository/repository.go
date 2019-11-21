@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/scakemyer/quasar/config"
-	"github.com/scakemyer/quasar/util"
-	"github.com/scakemyer/quasar/xbmc"
+	"github.com/i96751414/quasar/config"
+	"github.com/i96751414/quasar/util"
+	"github.com/i96751414/quasar/xbmc"
 )
 
 func copyFile(from string, to string) error {
@@ -36,7 +36,7 @@ func MakeQuasarRepositoryAddon() error {
 	addon := &xbmc.Addon{
 		Id:           addonId,
 		Name:         addonName,
-		Version:      util.Version[2:len(util.Version) - 1],
+		Version:      util.GetVersion(),
 		ProviderName: config.Get().Info.Author,
 		Extensions: []*xbmc.AddonExtension{
 			&xbmc.AddonExtension{

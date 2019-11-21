@@ -2,13 +2,21 @@ package util
 
 import (
 	"fmt"
-	"github.com/scakemyer/libtorrent-go"
+	"github.com/anacrolix/torrent"
 )
 
 var (
-	Version   string
+	Version = "development"
 )
 
 func UserAgent() string {
-	return fmt.Sprintf("Quasar/%s libtorrent/%s", Version[1:len(Version) - 1], libtorrent.Version())
+	return fmt.Sprintf("Quasar/%s %s", GetVersion(), torrent.DefaultHTTPUserAgent)
+}
+
+func GetVersion() string {
+	return Version //[1 : len(Version)-1]
+}
+
+func DefaultPeerID() string {
+	return "-GT0001-"
 }

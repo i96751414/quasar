@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/op/go-logging"
-	"github.com/scakemyer/quasar/bittorrent"
-	"github.com/scakemyer/quasar/config"
-	"github.com/scakemyer/quasar/tmdb"
-	"github.com/scakemyer/quasar/xbmc"
+	"github.com/i96751414/quasar/bittorrent"
+	"github.com/i96751414/quasar/config"
+	"github.com/i96751414/quasar/tmdb"
+	"github.com/i96751414/quasar/xbmc"
 )
 
 const (
