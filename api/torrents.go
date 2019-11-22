@@ -102,7 +102,7 @@ func ExistingTorrent(btService *bittorrent.BTService, longName string) (existing
 		}
 
 		if nameMatch(info.Name, longName) {
-			infoHash := torrentHandle.InfoHash().HexString()
+			infoHash := torrentHandle.InfoHashString()
 
 			torrentFile := filepath.Join(config.Get().TorrentsPath, fmt.Sprintf("%s.torrent", infoHash))
 			return torrentFile
@@ -150,10 +150,10 @@ func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 			//sessionAction := []string{"LOCALIZE[30233]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/pause"))}
 
 			var torrentAction []string
-			status := bittorrent.StatusStrings[torrentHandle.GetState()]
-			if status == "Paused" {
+			status := torrentHandle.GetState()
+			if status == bittorrent.StatusPaused {
 				if progress >= 100 {
-					status = "Finished"
+					status = bittorrent.StatusFinished
 				}
 				torrentAction = []string{"LOCALIZE[30235]", fmt.Sprintf("XBMC.RunPlugin(%s)", UrlForXBMC("/torrents/resume/%d", i))}
 			} else {
@@ -162,22 +162,23 @@ func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 
 			color := "white"
 			switch status {
-			case "Paused":
+			case bittorrent.StatusPaused:
 				fallthrough
-			case "Finished":
+			case bittorrent.StatusFinished:
 				color = "grey"
-			case "Seeding":
+			case bittorrent.StatusSeeding:
 				color = "green"
-			case "Buffering":
+			case bittorrent.StatusBuffering:
 				color = "blue"
-			case "Finding":
+			case bittorrent.StatusFinding:
 				color = "orange"
-			case "Checking":
+			case bittorrent.StatusChecking:
 				color = "teal"
-			case "Queued":
+			case bittorrent.StatusQueued:
 				color = "black"
 			}
-			torrentsLog.Infof("- %.2f%% - %s - %.2f:1 / %.2f:1 (%s) - %s", progress, status, ratio, timeRatio, seedingTime.String(), torrentName)
+			torrentsLog.Infof("- %.2f%% - %s - %.2f:1 / %.2f:1 (%s) - %s",
+				progress, bittorrent.StatusStrings[status], ratio, timeRatio, seedingTime.String(), torrentName)
 
 			var (
 				tmdb        string
@@ -186,7 +187,7 @@ func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 				episode     string
 				contentType string
 			)
-			infoHash := torrentHandle.InfoHash().HexString()
+			infoHash := torrentHandle.InfoHashString()
 			dbItem := btService.GetDBItem(infoHash)
 			if dbItem != nil && dbItem.Type != "" {
 				contentType = dbItem.Type
@@ -208,8 +209,9 @@ func ListTorrents(btService *bittorrent.BTService) gin.HandlerFunc {
 				"episode", episode)
 
 			item := xbmc.ListItem{
-				Label: fmt.Sprintf("%.2f%% - [COLOR %s]%s[/COLOR] - %.2f:1 / %.2f:1 (%s) - %s", progress, color, status, ratio, timeRatio, seedingTime.String(), torrentName),
-				Path:  playUrl,
+				Label: fmt.Sprintf("%.2f%% - [COLOR %s]%s[/COLOR] - %.2f:1 / %.2f:1 (%s) - %s",
+					progress, color, bittorrent.StatusStrings[status], ratio, timeRatio, seedingTime.String(), torrentName),
+				Path: playUrl,
 				Info: &xbmc.ListItemInfo{
 					Title: torrentName,
 				},
@@ -247,10 +249,10 @@ func ListTorrentsWeb(btService *bittorrent.BTService) gin.HandlerFunc {
 			torrentName := info.Name
 			progress := torrentHandle.GetProgress()
 
-			status := bittorrent.StatusStrings[torrentHandle.GetState()]
-			if status == "Paused" {
+			status := torrentHandle.GetState()
+			if status == bittorrent.StatusPaused {
 				if progress >= 100 {
-					status = "Finished"
+					status = bittorrent.StatusFinished
 				}
 			}
 
@@ -280,7 +282,7 @@ func ListTorrentsWeb(btService *bittorrent.BTService) gin.HandlerFunc {
 			torrent := TorrentsWeb{
 				Name:          torrentName,
 				Size:          size,
-				Status:        status,
+				Status:        bittorrent.StatusStrings[status],
 				Progress:      progress,
 				Ratio:         ratio,
 				TimeRatio:     timeRatio,
@@ -357,7 +359,7 @@ func ResumeTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 		if info != nil {
 			torrentsLog.Infof("Resuming %s", info.Name)
 		} else {
-			torrentsLog.Infof("Resuming %s", torrentHandle.InfoHash().HexString())
+			torrentsLog.Infof("Resuming %s", torrentHandle.InfoHashString())
 		}
 
 		torrentHandle.Resume()
@@ -382,7 +384,7 @@ func MoveTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 		if info != nil {
 			torrentsLog.Infof("Marking %s to be moved...", info.Name)
 		} else {
-			torrentsLog.Infof("Marking %s to be moved...", torrentHandle.InfoHash().HexString())
+			torrentsLog.Infof("Marking %s to be moved...", torrentHandle.InfoHashString())
 		}
 		btService.MarkedToMove = torrentIndex
 
@@ -406,7 +408,7 @@ func PauseTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 		if info != nil {
 			torrentsLog.Infof("Pausing torrent %s", info.Name)
 		} else {
-			torrentsLog.Infof("Pausing torrent %s", torrentHandle.InfoHash().HexString())
+			torrentsLog.Infof("Pausing torrent %s", torrentHandle.InfoHashString())
 		}
 		torrentHandle.Pause()
 
@@ -430,7 +432,7 @@ func RemoveTorrent(btService *bittorrent.BTService) gin.HandlerFunc {
 			return
 		}
 
-		infoHash := torrentHandle.InfoHash().HexString()
+		infoHash := torrentHandle.InfoHashString()
 
 		// Delete torrent file
 		torrentFile := filepath.Join(torrentsPath, fmt.Sprintf("%s.torrent", infoHash))

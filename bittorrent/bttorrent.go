@@ -3,6 +3,7 @@ package bittorrent
 import (
 	"bytes"
 	lt "github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/metainfo"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -35,23 +36,19 @@ var StatusStrings = []string{
 }
 
 type BTTorrent struct {
-	*lt.Torrent
+	torrent         *lt.Torrent
 	service         *BTService
 	infoHash        string
 	closing         chan struct{}
 	mu              *sync.RWMutex
-	chosenFiles     []*lt.File
-	bufferFiles     []*lt.File
+	files           []*BTFile
 	lastUpdateTime  time.Time
-	bufferPieces    []int
-	bufferSize      int64
 	downloadRate    float64
 	uploadRate      float64
 	seedingTime     float64
 	finishedTime    float64
 	activeTime      float64
 	isPaused        bool
-	isBuffering     bool
 	downloadStarted bool
 }
 
@@ -69,7 +66,7 @@ type BTTorrentStats struct {
 
 func NewBTTorrent(service *BTService, handle *lt.Torrent) *BTTorrent {
 	t := &BTTorrent{
-		Torrent:  handle,
+		torrent:  handle,
 		service:  service,
 		infoHash: handle.InfoHash().HexString(),
 		closing:  make(chan struct{}),
@@ -77,6 +74,72 @@ func NewBTTorrent(service *BTService, handle *lt.Torrent) *BTTorrent {
 	}
 
 	return t
+}
+
+func (t *BTTorrent) GotInfo() <-chan struct{} {
+	return t.torrent.GotInfo()
+}
+
+func (t *BTTorrent) Info() *metainfo.Info {
+	return t.torrent.Info()
+}
+
+func (t *BTTorrent) Metainfo() metainfo.MetaInfo {
+	return t.torrent.Metainfo()
+}
+
+func (t *BTTorrent) Stats() lt.TorrentStats {
+	return t.torrent.Stats()
+}
+
+func (t *BTTorrent) NumPieces() int {
+	return t.torrent.NumPieces()
+}
+
+func (t *BTTorrent) Length() int64 {
+	return t.torrent.Length()
+}
+
+func (t *BTTorrent) Name() string {
+	return t.torrent.Name()
+}
+
+func (t *BTTorrent) InfoHashString() string {
+	return t.infoHash
+}
+
+func (t *BTTorrent) BytesMissing() int64 {
+	return t.torrent.BytesMissing()
+}
+
+func (t *BTTorrent) BytesCompleted() int64 {
+	return t.torrent.BytesCompleted()
+}
+
+func (t *BTTorrent) PieceBytesMissing(piece int) int64 {
+	return t.torrent.PieceBytesMissing(piece)
+}
+
+func (t *BTTorrent) PieceStateRuns() []lt.PieceStateRun {
+	return t.torrent.PieceStateRuns()
+}
+
+func (t *BTTorrent) NewReader() lt.Reader {
+	return t.torrent.NewReader()
+}
+
+func (t *BTTorrent) Files() []*BTFile {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.files == nil {
+		files := t.torrent.Files()
+		t.files = make([]*BTFile, len(files))
+		for i, f := range files {
+			t.files[i] = NewBTFile(f, t)
+		}
+	}
+	return t.files
 }
 
 func (t *BTTorrent) SaveMetaInfo(path string) error {
@@ -95,7 +158,7 @@ func (t *BTTorrent) watch() {
 	rateCounter := 0
 	lastRateCounterIdx := len(downRates) - 1
 
-	progressTicker := time.NewTicker(1 * time.Second)
+	progressTicker := time.NewTicker(1000 * time.Millisecond)
 	defer progressTicker.Stop()
 
 	for {
@@ -110,7 +173,7 @@ func (t *BTTorrent) watch() {
 				t.lastUpdateTime = timeNow
 
 				// Update times
-				status := t.getState()
+				status := t.getState(t.files...)
 				if status != StatusPaused {
 					t.activeTime += timeDif
 					switch status {
@@ -148,19 +211,20 @@ func (t *BTTorrent) watch() {
 		}
 	}
 }
-func (t *BTTorrent) GetBufferingProgress() float64 {
-	var missingLength int64
-	for _, piece := range t.bufferPieces {
-		missingLength += t.PieceBytesMissing(piece)
-	}
 
-	return float64(t.bufferSize-missingLength) / float64(t.bufferSize) * 100.0
+func (t *BTTorrent) GetOverallProgress() float64 {
+	return float64(t.BytesCompleted()) / float64(t.Length()) * 100.0
+}
+
+func (t *BTTorrent) GetProgress() float64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return getFilesProgress(t.files...)
 }
 
 func (t *BTTorrent) GetCheckingProgress() float64 {
 	total := 0
 	checking := 0
-	var progress float64
 
 	for _, state := range t.PieceStateRuns() {
 		if state.Length > 0 {
@@ -171,94 +235,18 @@ func (t *BTTorrent) GetCheckingProgress() float64 {
 		}
 	}
 	if total > 0 {
-		progress = float64(total-checking) / float64(total) * 100.0
+		return float64(total-checking) / float64(total) * 100.0
 	}
-	return progress
-}
-
-func (t *BTTorrent) DownloadFile(file *lt.File) {
-	if file == nil {
-		log.Debug("Received a null file")
-		return
-	}
-	for _, f := range t.chosenFiles {
-		if f == file {
-			return
-		}
-	}
-
-	t.chosenFiles = append(t.chosenFiles, file)
-	log.Debugf("Choosing file for download: %s", file.DisplayPath())
-	file.SetPriority(lt.PiecePriorityNormal)
-}
-
-func (t *BTTorrent) Buffer(file *lt.File, startBufferSize, endBufferSize int64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	if file == nil {
-		log.Debug("Received a null file")
-		return
-	}
-
-	for _, f := range t.bufferFiles {
-		if f == file {
-			return
-		}
-	}
-
-	t.bufferFiles = append(t.bufferFiles, file)
-	bufferSize := startBufferSize + endBufferSize
-
-	if file.Length() >= bufferSize {
-		aFirstPieceIndex, aEndPieceIndex := t.getBufferPieces(file, 0, startBufferSize)
-		for idx := aFirstPieceIndex; idx <= aEndPieceIndex; idx++ {
-			piece := t.Piece(int(idx))
-			piece.SetPriority(lt.PiecePriorityNow)
-			t.bufferSize += piece.Info().Length()
-			t.bufferPieces = append(t.bufferPieces, int(idx))
-		}
-
-		bFirstPieceIndex, bEndPieceIndex := t.getBufferPieces(file, file.Length()-endBufferSize, endBufferSize)
-		for idx := bFirstPieceIndex; idx <= bEndPieceIndex; idx++ {
-			piece := t.Piece(int(idx))
-			piece.SetPriority(lt.PiecePriorityNow)
-			t.bufferSize += piece.Info().Length()
-			t.bufferPieces = append(t.bufferPieces, int(idx))
-		}
-	} else {
-		firstPieceIndex, endPieceIndex := t.getBufferPieces(file, 0, file.Length())
-		for idx := firstPieceIndex; idx <= endPieceIndex; idx++ {
-			piece := t.Piece(int(idx))
-			piece.SetPriority(lt.PiecePriorityNow)
-			t.bufferSize += piece.Info().Length()
-			t.bufferPieces = append(t.bufferPieces, int(idx))
-		}
-	}
-
-	t.isBuffering = true
-}
-
-func (t *BTTorrent) getBufferPieces(file *lt.File, off, length int64) (firstPieceIndex, endPieceIndex int64) {
-	if off < 0 {
-		off = 0
-	}
-	end := off + length
-	if end > file.Length() {
-		end = file.Length()
-	}
-	firstPieceIndex = (file.Offset() + off) * int64(t.NumPieces()) / t.Length()
-	endPieceIndex = (file.Offset() + end) * int64(t.NumPieces()) / t.Length()
-	return
+	return 0
 }
 
 func (t *BTTorrent) GetState() TorrentStatus {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.getState()
+	return t.getState(t.files...)
 }
 
-func (t *BTTorrent) getState() TorrentStatus {
+func (t *BTTorrent) getState(file ...*BTFile) TorrentStatus {
 	if t.isPaused {
 		return StatusPaused
 	} else if t.Info() == nil {
@@ -282,16 +270,23 @@ func (t *BTTorrent) getState() TorrentStatus {
 		}
 	}
 
-	progress := t.GetProgress()
+	progress := getFilesProgress(file...)
 	if t.Stats().ActivePeers == 0 && progress == 0 {
 		return StatusFinding
 	}
-	if t.isBuffering {
-		if t.GetBufferingProgress() < 100 {
-			return StatusBuffering
-		} else {
-			t.isBuffering = false
+	buffering := false
+	for _, f := range file {
+		if f.isBuffering {
+			if f.GetBufferingProgress() < 100 {
+				buffering = true
+			} else {
+				f.isBuffering = false
+				f.Download()
+			}
 		}
+	}
+	if buffering {
+		return StatusBuffering
 	}
 	if progress < 100 {
 		if t.downloadStarted {
@@ -307,43 +302,21 @@ func (t *BTTorrent) getState() TorrentStatus {
 	return StatusQueued
 }
 
-func (t *BTTorrent) GetProgress() float64 {
-	var total int64
-	for _, f := range t.chosenFiles {
-		total += f.Length()
-	}
-
-	if total == 0 {
-		return 0
-	}
-
-	progress := float64(t.BytesCompleted()) / float64(total) * 100.0
-	if progress > 100 {
-		progress = 100
-	}
-
-	return progress
-}
-
 func (t *BTTorrent) Pause() {
-	t.SetMaxEstablishedConns(0)
+	t.torrent.SetMaxEstablishedConns(0)
 	t.isPaused = true
 }
 
 func (t *BTTorrent) Resume() {
-	t.SetMaxEstablishedConns(t.service.clientConfig.EstablishedConnsPerTorrent)
+	t.torrent.SetMaxEstablishedConns(t.service.clientConfig.EstablishedConnsPerTorrent)
 	t.isPaused = false
 }
 
 func (t *BTTorrent) Drop(removeFiles bool) {
 	log.Infof("Dropping torrent: %s", t.Name())
-	var files []string
-	for _, f := range t.Files() {
-		files = append(files, f.Path())
-	}
 
 	close(t.closing)
-	t.Torrent.Drop()
+	t.torrent.Drop()
 
 	if removeFiles {
 		go func() {
@@ -352,8 +325,8 @@ func (t *BTTorrent) Drop(removeFiles bool) {
 			// so we try until rm fails
 			for i := 1; i <= 5; i++ {
 				left := false
-				for _, f := range files {
-					path := filepath.Join(t.service.clientConfig.DataDir, f)
+				for _, f := range t.Files() {
+					path := filepath.Join(t.service.clientConfig.DataDir, f.Path())
 					if _, err := os.Stat(path); err == nil {
 						log.Infof("Deleting torrent file at %s", path)
 						if errRm := os.Remove(path); errRm != nil {

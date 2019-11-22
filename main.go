@@ -92,7 +92,7 @@ func makeBTConfiguration(conf *config.Configuration) *bittorrent.BTConfiguration
 
 	if conf.SocksEnabled == true {
 		btConfig.Proxy = &bittorrent.ProxySettings{
-			Type:     bittorrent.ProxyType(conf.ProxyType + 1),
+			Type:     bittorrent.ProxyType(conf.ProxyType),
 			Hostname: conf.SocksHost,
 			Port:     conf.SocksPort,
 			Username: conf.SocksLogin,

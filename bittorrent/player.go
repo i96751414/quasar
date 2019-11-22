@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	lt "github.com/anacrolix/torrent"
 	"github.com/dustin/go-humanize"
 	"github.com/i96751414/quasar/broadcast"
 	"github.com/i96751414/quasar/config"
@@ -62,14 +61,13 @@ type BTPlayer struct {
 	askToKeepDownloading bool
 	overlayStatusEnabled bool
 	torrentHandle        *BTTorrent
-	chosenFile           *lt.File
-	subtitlesFile        *lt.File
+	chosenFile           *BTFile
+	subtitlesFile        *BTFile
 	fileSize             int64
 	fileName             string
 	torrentName          string
 	extracted            string
 	isRarArchive         bool
-	hasChosenFile        bool
 	isDownloading        bool
 	notEnoughSpace       bool
 	diskStatus           *diskusage.DiskStatus
@@ -126,7 +124,6 @@ func NewBTPlayer(bts *BTService, params BTPlayerParams) *BTPlayer {
 		season:               params.Season,
 		episode:              params.Episode,
 		torrentFile:          "",
-		hasChosenFile:        false,
 		isDownloading:        false,
 		notEnoughSpace:       false,
 		closing:              make(chan interface{}),
@@ -166,10 +163,10 @@ func (btp *BTPlayer) Buffer() error {
 
 	btp.torrentFile = filepath.Join(btp.bts.config.TorrentsPath, fmt.Sprintf("%s.torrent", btp.torrentHandle.infoHash))
 
-	go btp.waitMetadata()
-
 	buffered, done := btp.bufferEvents.Listen()
 	defer close(done)
+
+	go btp.waitMetadata()
 
 	btp.dialogProgress = xbmc.NewDialogProgress("Quasar", "", "", "")
 	defer btp.dialogProgress.Close()
@@ -192,7 +189,7 @@ func (btp *BTPlayer) waitCheckAvailableSpace() {
 	for {
 		select {
 		case <-ticker.C:
-			if btp.hasChosenFile {
+			if btp.chosenFile != nil {
 				if !btp.CheckAvailableSpace() {
 					btp.bufferEvents.Broadcast(errors.New("not enough space on download destination"))
 				}
@@ -247,7 +244,7 @@ func (btp *BTPlayer) waitMetadata() {
 	}
 }
 
-func (btp *BTPlayer) getBufferSize(file *lt.File) int64 {
+func (btp *BTPlayer) getBufferSize(file *BTFile) int64 {
 	minBufferSize := int64(float64(file.Length()) * startBufferPercent)
 	bufferSize := int64(btp.bts.config.BufferSize)
 	if minBufferSize < bufferSize {
@@ -268,41 +265,43 @@ func (btp *BTPlayer) onMetadataReceived() {
 		}
 	}
 
-	chosenFileIndex, err := btp.chooseFile()
+	files := btp.torrentHandle.Files()
+	chosenFileIndex, err := btp.chooseFile(files)
 	if err != nil {
 		btp.bufferEvents.Broadcast(err)
 		return
 	}
-	btp.chosenFile = btp.torrentHandle.Files()[chosenFileIndex]
-	btp.hasChosenFile = true
+	btp.chosenFile = files[chosenFileIndex]
 	btp.fileSize = btp.chosenFile.Length()
 	btp.fileName = filepath.Base(btp.chosenFile.Path())
 	btp.log.Infof("Chosen file: %s", btp.fileName)
 
-	btp.subtitlesFile = btp.findSubtitlesFile()
+	btp.subtitlesFile = btp.findSubtitlesFile(files)
 
 	btp.log.Infof("Saving torrent to database")
 	btp.bts.UpdateDB(Update, btp.torrentHandle.infoHash, btp.tmdbId, btp.contentType, chosenFileIndex, btp.showId, btp.season, btp.episode)
 
 	if btp.isRarArchive {
+		btp.chosenFile.Download()
 		return
 	}
 
 	btp.log.Info("Setting file priorities")
 	if btp.subtitlesFile != nil {
-		btp.torrentHandle.DownloadFile(btp.subtitlesFile)
+		btp.subtitlesFile.Download()
 	}
-	btp.torrentHandle.Buffer(btp.chosenFile, btp.getBufferSize(btp.chosenFile), endBufferSize)
+	btp.chosenFile.BufferAndDownload(btp.getBufferSize(btp.chosenFile), endBufferSize)
 }
 
-func (btp *BTPlayer) statusStrings(progress float64) (string, string, string) {
-	line1 := fmt.Sprintf("%s (%.2f%%)", StatusStrings[btp.torrentHandle.GetState()], progress)
-	if btp.torrentHandle.Info() != nil {
+func (btp *BTPlayer) statusStrings(progress float64, state TorrentStatus) (string, string, string) {
+	line1 := fmt.Sprintf("%s (%.2f%%)", StatusStrings[state], progress)
+	info := btp.torrentHandle.Info()
+	if info != nil {
 		var totalSize int64
 		if btp.fileSize > 0 && !btp.isRarArchive {
 			totalSize = btp.fileSize
 		} else {
-			totalSize = btp.torrentHandle.Length()
+			totalSize = info.Length
 		}
 		line1 += " - " + humanize.Bytes(uint64(totalSize))
 	}
@@ -328,10 +327,9 @@ func isRarArchive(fileName string) bool {
 	return rarPattern.MatchString(fileName)
 }
 
-func (btp *BTPlayer) chooseFile() (int, error) {
+func (btp *BTPlayer) chooseFile(files []*BTFile) (int, error) {
 	var biggestFile int
 	maxSize := int64(0)
-	files := btp.torrentHandle.Files()
 	var candidateFiles []int
 
 	for i, file := range files {
@@ -408,14 +406,14 @@ func (btp *BTPlayer) chooseFile() (int, error) {
 	return biggestFile, nil
 }
 
-func (btp *BTPlayer) findSubtitlesFile() *lt.File {
+func (btp *BTPlayer) findSubtitlesFile(files []*BTFile) *BTFile {
 	extension := filepath.Ext(btp.fileName)
 	chosenName := btp.fileName[0 : len(btp.fileName)-len(extension)]
 	srtFileName := chosenName + ".srt"
 
-	var lastMatched *lt.File
+	var lastMatched *BTFile
 	countMatched := 0
-	for _, file := range btp.torrentHandle.Files() {
+	for _, file := range files {
 		fileName := file.Path()
 		if strings.HasSuffix(fileName, srtFileName) {
 			return file
@@ -484,77 +482,86 @@ func (btp *BTPlayer) bufferDialog() {
 				return
 			}
 		case <-oneSecond.C:
-			// Handle "Checking" state for resumed downloads
-			if btp.torrentHandle.GetState() == StatusChecking || btp.isRarArchive {
-				progress := btp.torrentHandle.GetCheckingProgress()
-				line1, line2, line3 := btp.statusStrings(progress)
-				btp.dialogProgress.Update(int(progress), line1, line2, line3)
+			if btp.chosenFile != nil {
+				state := btp.chosenFile.GetState()
+				// Handle "Checking" state for resumed downloads
+				if state == StatusChecking {
+					progress := btp.torrentHandle.GetCheckingProgress()
+					line1, line2, line3 := btp.statusStrings(progress, state)
+					btp.dialogProgress.Update(int(progress), line1, line2, line3)
+				} else if btp.isRarArchive {
+					progress := btp.torrentHandle.GetProgress()
+					line1, line2, line3 := btp.statusStrings(progress, state)
+					btp.dialogProgress.Update(int(progress), line1, line2, line3)
 
-				if btp.isRarArchive && progress >= 100 {
-					archivePath := filepath.Join(btp.bts.config.DownloadPath, btp.chosenFile.Path())
-					destPath := filepath.Join(btp.bts.config.DownloadPath, btp.chosenFile.Path(), "extracted")
+					if progress >= 100 {
+						archivePath := filepath.Join(btp.bts.config.DownloadPath, btp.chosenFile.Path())
+						destPath := filepath.Join(btp.bts.config.DownloadPath, btp.chosenFile.Path(), "extracted")
 
-					if _, err := os.Stat(destPath); err == nil {
+						if _, err := os.Stat(destPath); err == nil {
+							btp.findExtracted(destPath)
+							btp.setRateLimiting(true)
+							btp.bufferEvents.Signal()
+							return
+						} else {
+							os.MkdirAll(destPath, 0755)
+						}
+
+						cmdName := "unrar"
+						cmdArgs := []string{"e", archivePath, destPath}
+						cmd := exec.Command(cmdName, cmdArgs...)
+						if platform := xbmc.GetPlatform(); platform.OS == "windows" {
+							cmdName = "unrar.exe"
+						}
+
+						cmdReader, err := cmd.StdoutPipe()
+						if err != nil {
+							btp.log.Error(err)
+							btp.bufferEvents.Broadcast(err)
+							xbmc.Notify("Quasar", "LOCALIZE[30304]", config.AddonIcon())
+							return
+						}
+
+						scanner := bufio.NewScanner(cmdReader)
+						go func() {
+							for scanner.Scan() {
+								btp.log.Infof("unrar | %s", scanner.Text())
+							}
+						}()
+
+						err = cmd.Start()
+						if err != nil {
+							btp.log.Error(err)
+							btp.bufferEvents.Broadcast(err)
+							xbmc.Notify("Quasar", "LOCALIZE[30305]", config.AddonIcon())
+							return
+						}
+
+						err = cmd.Wait()
+						if err != nil {
+							btp.log.Error(err)
+							btp.bufferEvents.Broadcast(err)
+							xbmc.Notify("Quasar", "LOCALIZE[30306]", config.AddonIcon())
+							return
+						}
+
 						btp.findExtracted(destPath)
 						btp.setRateLimiting(true)
 						btp.bufferEvents.Signal()
 						return
+					}
+				} else {
+					bufferProgress := btp.chosenFile.GetBufferingProgress()
+					if bufferProgress < 100 {
+						line1, line2, line3 := btp.statusStrings(bufferProgress, StatusBuffering)
+						btp.dialogProgress.Update(int(bufferProgress), line1, line2, line3)
 					} else {
-						os.MkdirAll(destPath, 0755)
-					}
-
-					cmdName := "unrar"
-					cmdArgs := []string{"e", archivePath, destPath}
-					cmd := exec.Command(cmdName, cmdArgs...)
-					if platform := xbmc.GetPlatform(); platform.OS == "windows" {
-						cmdName = "unrar.exe"
-					}
-
-					cmdReader, err := cmd.StdoutPipe()
-					if err != nil {
-						btp.log.Error(err)
-						btp.bufferEvents.Broadcast(err)
-						xbmc.Notify("Quasar", "LOCALIZE[30304]", config.AddonIcon())
+						line1, line2, line3 := btp.statusStrings(100, StatusBuffering)
+						btp.dialogProgress.Update(100, line1, line2, line3)
+						btp.setRateLimiting(true)
+						btp.bufferEvents.Signal()
 						return
 					}
-
-					scanner := bufio.NewScanner(cmdReader)
-					go func() {
-						for scanner.Scan() {
-							btp.log.Infof("unrar | %s", scanner.Text())
-						}
-					}()
-
-					err = cmd.Start()
-					if err != nil {
-						btp.log.Error(err)
-						btp.bufferEvents.Broadcast(err)
-						xbmc.Notify("Quasar", "LOCALIZE[30305]", config.AddonIcon())
-						return
-					}
-
-					err = cmd.Wait()
-					if err != nil {
-						btp.log.Error(err)
-						btp.bufferEvents.Broadcast(err)
-						xbmc.Notify("Quasar", "LOCALIZE[30306]", config.AddonIcon())
-						return
-					}
-
-					btp.findExtracted(destPath)
-					btp.setRateLimiting(true)
-					btp.bufferEvents.Signal()
-					return
-				}
-			} else {
-				bufferProgress := btp.torrentHandle.GetBufferingProgress()
-				line1, line2, line3 := btp.statusStrings(bufferProgress)
-				btp.dialogProgress.Update(int(bufferProgress), line1, line2, line3)
-				if bufferProgress >= 100 {
-					btp.torrentHandle.DownloadFile(btp.chosenFile)
-					btp.setRateLimiting(true)
-					btp.bufferEvents.Signal()
-					return
 				}
 			}
 		}
@@ -680,7 +687,7 @@ playbackLoop:
 				}
 				if btp.overlayStatusEnabled == true {
 					progress := btp.torrentHandle.GetProgress()
-					line1, line2, line3 := btp.statusStrings(progress)
+					line1, line2, line3 := btp.statusStrings(progress, btp.chosenFile.GetState())
 					btp.overlayStatus.Update(int(progress), line1, line2, line3)
 					if overlayStatusActive == false {
 						btp.overlayStatus.Show()

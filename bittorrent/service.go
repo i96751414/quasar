@@ -52,11 +52,14 @@ const (
 	UploadRateBurst   = 256 << 10
 )
 
+const (
+	DefaultConnectionsLimit = 200
+)
+
 type ProxyType int
 
 const (
-	ProxyTypeNone ProxyType = iota
-	ProxyTypeSocks4
+	ProxyTypeSocks4 ProxyType = iota
 	ProxyTypeSocks5
 	ProxyTypeSocks5Password
 	ProxyTypeSocksHTTP
@@ -293,7 +296,12 @@ func (s *BTService) configure() {
 
 	if s.config.ConnectionsLimit > 0 {
 		s.clientConfig.EstablishedConnsPerTorrent = s.config.ConnectionsLimit
+	} else {
+		s.clientConfig.EstablishedConnsPerTorrent = DefaultConnectionsLimit
 	}
+	s.clientConfig.HalfOpenConnsPerTorrent = s.clientConfig.EstablishedConnsPerTorrent / 2
+	s.clientConfig.TorrentPeersLowWater = s.clientConfig.EstablishedConnsPerTorrent
+	s.clientConfig.TorrentPeersHighWater = s.clientConfig.EstablishedConnsPerTorrent * 10
 
 	setPlatformSpecificSettings(s.clientConfig)
 
