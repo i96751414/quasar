@@ -50,6 +50,7 @@ type BTTorrent struct {
 	activeTime      float64
 	isPaused        bool
 	downloadStarted bool
+	bytesCompleted  int64
 }
 
 type BTTorrentStats struct {
@@ -108,14 +109,6 @@ func (t *BTTorrent) InfoHashString() string {
 	return t.infoHash
 }
 
-func (t *BTTorrent) BytesMissing() int64 {
-	return t.torrent.BytesMissing()
-}
-
-func (t *BTTorrent) BytesCompleted() int64 {
-	return t.torrent.BytesCompleted()
-}
-
 func (t *BTTorrent) PieceBytesMissing(piece int) int64 {
 	return t.torrent.PieceBytesMissing(piece)
 }
@@ -126,6 +119,14 @@ func (t *BTTorrent) PieceStateRuns() []lt.PieceStateRun {
 
 func (t *BTTorrent) NewReader() lt.Reader {
 	return t.torrent.NewReader()
+}
+
+func (t *BTTorrent) BytesMissing() int64 {
+	return t.torrent.Length() - t.bytesCompleted
+}
+
+func (t *BTTorrent) BytesCompleted() int64 {
+	return t.bytesCompleted
 }
 
 func (t *BTTorrent) Files() []*BTFile {
@@ -167,6 +168,13 @@ func (t *BTTorrent) watch() {
 			go func() {
 				t.mu.Lock()
 				defer t.mu.Unlock()
+
+				t.bytesCompleted = t.torrent.BytesCompleted()
+				for _, f := range t.files {
+					if f.markedForDownload {
+						f.updateStats()
+					}
+				}
 
 				timeNow := time.Now()
 				timeDif := timeNow.Sub(t.lastUpdateTime).Seconds()
@@ -220,6 +228,28 @@ func (t *BTTorrent) GetProgress() float64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return getFilesProgress(t.files...)
+}
+
+func getFilesProgress(file ...*BTFile) float64 {
+	var total int64
+	var completed int64
+	for _, f := range file {
+		if f.markedForDownload {
+			total += f.Length()
+			completed += f.bytesCompleted
+		}
+	}
+
+	if total == 0 {
+		return 0
+	}
+
+	progress := float64(completed) / float64(total) * 100.0
+	if progress > 100 {
+		progress = 100
+	}
+
+	return progress
 }
 
 func (t *BTTorrent) GetCheckingProgress() float64 {

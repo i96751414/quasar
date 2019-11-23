@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/anacrolix/torrent/storage"
 	"golang.org/x/time/rate"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -249,7 +250,28 @@ func (s *BTService) configure() {
 	s.log.Infof("UserAgent: %s", s.UserAgent)
 
 	s.clientConfig = lt.NewDefaultClientConfig()
-	// TODO: Add listen port and host
+
+	listenIP, listenIPv6, listenPort, err := util.GetListenAddr(
+		s.config.ListenInterfaces, s.config.LowerListenPort, s.config.UpperListenPort)
+	if err != nil {
+		log.Error(err)
+		os.Exit(1)
+	}
+	if listenIPv6 == nil {
+		s.log.Infof("Using IPv4 '%s' on port '%d' (no IPv6)", listenIP, listenPort)
+	} else {
+		s.log.Infof("Using IPv4 '%s' and IPv6 '%s' on port '%d'", listenIP, listenPort)
+	}
+
+	s.clientConfig.DisableIPv6 = listenIPv6 == nil
+	s.clientConfig.ListenHost = func(network string) string {
+		// Check for tcp6 and udp6
+		if strings.Contains(network, "6") {
+			return *listenIPv6
+		}
+		return listenIP
+	}
+	s.clientConfig.ListenPort = listenPort
 
 	s.clientConfig.DataDir = s.config.DownloadPath
 	s.clientConfig.DefaultStorage = storage.NewFile(s.config.DownloadPath)
@@ -299,13 +321,13 @@ func (s *BTService) configure() {
 	} else {
 		s.clientConfig.EstablishedConnsPerTorrent = DefaultConnectionsLimit
 	}
+
+	setPlatformSpecificSettings(s.clientConfig)
+
 	s.clientConfig.HalfOpenConnsPerTorrent = s.clientConfig.EstablishedConnsPerTorrent / 2
 	s.clientConfig.TorrentPeersLowWater = s.clientConfig.EstablishedConnsPerTorrent
 	s.clientConfig.TorrentPeersHighWater = s.clientConfig.EstablishedConnsPerTorrent * 10
 
-	setPlatformSpecificSettings(s.clientConfig)
-
-	var err error
 	log.Debugf("BitClient config: %#v", s.clientConfig)
 	if s.client, err = lt.NewClient(s.clientConfig); err != nil {
 		// If client can't be created - we should panic
@@ -316,6 +338,10 @@ func (s *BTService) configure() {
 		log.Debugf("Created bit client: %#v", s.client)
 		log.Debugf("client listening on: %d", s.client.LocalPort())
 	}
+}
+
+func (s *BTService) PrintConnTrackerStatus(w io.Writer) {
+	s.clientConfig.ConnTracker.PrintStatus(w)
 }
 
 func (s *BTService) stopServices() {

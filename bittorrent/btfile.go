@@ -5,12 +5,14 @@ import (
 )
 
 type BTFile struct {
-	file              *lt.File
-	t                 *BTTorrent
-	bufferPieces      []int
-	bufferSize        int64
-	markedForDownload bool
-	isBuffering       bool
+	file               *lt.File
+	t                  *BTTorrent
+	bufferPieces       []int
+	bufferSize         int64
+	markedForDownload  bool
+	isBuffering        bool
+	bytesCompleted     int64
+	bufferBytesMissing int64
 }
 
 func NewBTFile(f *lt.File, t *BTTorrent) *BTFile {
@@ -41,13 +43,13 @@ func (f *BTFile) Offset() int64 {
 }
 
 func (f *BTFile) BytesCompleted() int64 {
-	return f.file.BytesCompleted()
+	return f.bytesCompleted
 }
 
 func (f *BTFile) Download() {
 	log.Debugf("Choosing file for download: %s", f.DisplayPath())
 	f.markedForDownload = true
-	f.file.SetPriority(lt.PiecePriorityNormal)
+	f.file.SetPriority(lt.PiecePriorityHigh)
 }
 
 func (f *BTFile) BufferAndDownload(startBufferSize, endBufferSize int64) {
@@ -99,17 +101,25 @@ func (f *BTFile) getPiecesIndexes(off, length int64) (firstPieceIndex, endPieceI
 	return
 }
 
+func (f *BTFile) updateStats() {
+	f.bytesCompleted = f.file.BytesCompleted()
+	if f.isBuffering {
+		f.bufferBytesMissing = 0
+		for _, piece := range f.bufferPieces {
+			f.bufferBytesMissing += f.t.PieceBytesMissing(piece)
+		}
+		if f.bufferBytesMissing == 0 {
+			f.isBuffering = false
+			f.Download()
+		}
+	}
+}
+
 func (f *BTFile) GetBufferingProgress() float64 {
 	if f.bufferSize == 0 {
 		return 0
 	}
-
-	var missingLength int64
-	for _, piece := range f.bufferPieces {
-		missingLength += f.t.PieceBytesMissing(piece)
-	}
-
-	return float64(f.bufferSize-missingLength) / float64(f.bufferSize) * 100.0
+	return float64(f.bufferSize-f.bufferBytesMissing) / float64(f.bufferSize) * 100.0
 }
 
 func (f *BTFile) GetProgress() float64 {
@@ -120,26 +130,4 @@ func (f *BTFile) GetState() TorrentStatus {
 	f.t.mu.Lock()
 	defer f.t.mu.Unlock()
 	return f.t.getState(f)
-}
-
-func getFilesProgress(file ...*BTFile) float64 {
-	var total int64
-	var completed int64
-	for _, f := range file {
-		if f.markedForDownload {
-			total += f.Length()
-			completed += f.BytesCompleted()
-		}
-	}
-
-	if total == 0 {
-		return 0
-	}
-
-	progress := float64(completed) / float64(total) * 100.0
-	if progress > 100 {
-		progress = 100
-	}
-
-	return progress
 }

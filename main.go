@@ -164,12 +164,16 @@ func main() {
 
 	http.Handle("/", api.Routes(btService))
 	http.Handle("/files/", bittorrent.ServeTorrent(btService, config.Get().DownloadPath))
-	http.Handle("/reload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/reload", func(w http.ResponseWriter, r *http.Request) {
 		btService.Reconfigure(*makeBTConfiguration(config.Reload()))
-	}))
-	http.Handle("/shutdown", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})
+	http.HandleFunc("/debug/conntrack", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		btService.PrintConnTrackerStatus(w)
+	})
+	http.HandleFunc("/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		shutdown()
-	}))
+	})
 
 	xbmc.Notify("Quasar", "LOCALIZE[30208]", config.AddonIcon())
 
