@@ -40,7 +40,7 @@ func GetListenAddr(interfaces string, portMin int, portMax int) (IPv4 string, IP
 	}
 
 	IPv4, port, err = getIPv4AndPort(portMin, portMax, listenIPv4s)
-	if err != nil {
+	if err == nil {
 		for _, ip := range listenIPv6s {
 			addr := net.JoinHostPort(ip, strconv.Itoa(port))
 			if !isPortUsed("tcp6", addr) {
