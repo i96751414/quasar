@@ -49,7 +49,7 @@ func (f *BTFile) BytesCompleted() int64 {
 func (f *BTFile) Download() {
 	log.Debugf("Choosing file for download: %s", f.DisplayPath())
 	f.markedForDownload = true
-	f.file.SetPriority(lt.PiecePriorityHigh)
+	f.file.SetPriority(lt.PiecePriorityNormal)
 }
 
 func (f *BTFile) BufferAndDownload(startBufferSize, endBufferSize int64) {
