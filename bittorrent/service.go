@@ -16,7 +16,6 @@ import (
 
 	lt "github.com/anacrolix/torrent"
 	"github.com/boltdb/bolt"
-	"github.com/i96751414/quasar/broadcast"
 	"github.com/i96751414/quasar/config"
 	"github.com/i96751414/quasar/tmdb"
 	"github.com/i96751414/quasar/util"
@@ -109,8 +108,6 @@ type BTService struct {
 	client            *lt.Client
 	config            *BTConfiguration
 	log               *logging.Logger
-	libtorrentLog     *logging.Logger
-	alertsBroadcaster *broadcast.Broadcaster
 	dialogProgressBG  *xbmc.DialogProgressBG
 	clientConfig      *lt.ClientConfig
 	SpaceChecked      map[string]bool
@@ -152,8 +149,6 @@ func NewBTService(conf BTConfiguration, db *bolt.DB) *BTService {
 	s := &BTService{
 		db:                db,
 		log:               logging.MustGetLogger("btservice"),
-		libtorrentLog:     logging.MustGetLogger("libtorrent"),
-		alertsBroadcaster: broadcast.NewBroadcaster(),
 		SpaceChecked:      make(map[string]bool, 0),
 		config:            &conf,
 		closing:           make(chan interface{}),
@@ -260,7 +255,7 @@ func (s *BTService) configure() {
 	if listenIPv6 == nil {
 		s.log.Infof("Using IPv4 '%s' on port '%d' (no IPv6)", listenIP, listenPort)
 	} else {
-		s.log.Infof("Using IPv4 '%s' and IPv6 '%s' on port '%d'", listenIP, listenPort)
+		s.log.Infof("Using IPv4 '%s' and IPv6 '%s' on port '%d'", listenIP, *listenIPv6, listenPort)
 	}
 
 	s.clientConfig.DisableIPv6 = listenIPv6 == nil
@@ -607,16 +602,6 @@ func (s *BTService) downloadProgress() {
 						if _, err := os.Stat(torrentFile); err == nil {
 							s.log.Info("Deleting torrent file at", torrentFile)
 							if err := os.Remove(torrentFile); err != nil {
-								s.log.Error(err)
-								return err
-							}
-						}
-
-						// Delete fast resume data
-						fastResumeFile := filepath.Join(s.config.TorrentsPath, fmt.Sprintf("%s.fastresume", infoHash))
-						if _, err := os.Stat(fastResumeFile); err == nil {
-							s.log.Info("Deleting fast resume data at", fastResumeFile)
-							if err := os.Remove(fastResumeFile); err != nil {
 								s.log.Error(err)
 								return err
 							}

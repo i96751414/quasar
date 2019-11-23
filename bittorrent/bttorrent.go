@@ -154,10 +154,11 @@ func (t *BTTorrent) SaveMetaInfo(path string) error {
 func (t *BTTorrent) watch() {
 	var downloadedSize int64
 	var uploadedSize int64
-	downRates := []float64{0, 0, 0, 0, 0}
-	upRates := []float64{0, 0, 0, 0, 0}
-	rateCounter := 0
-	lastRateCounterIdx := len(downRates) - 1
+
+	lenRateCounter := 5
+	downRates := make([]float64, lenRateCounter)
+	upRates := make([]float64, lenRateCounter)
+	rateCounterIdx := 0
 
 	progressTicker := time.NewTicker(1000 * time.Millisecond)
 	defer progressTicker.Stop()
@@ -198,8 +199,8 @@ func (t *BTTorrent) watch() {
 				currentDownloadedSize := stats.BytesReadData.Int64()
 				currentUploadedSize := stats.BytesWrittenData.Int64()
 
-				downRates[rateCounter] = float64(currentDownloadedSize-downloadedSize) / timeDif
-				upRates[rateCounter] = float64(currentUploadedSize-uploadedSize) / timeDif
+				downRates[rateCounterIdx] = float64(currentDownloadedSize-downloadedSize) / timeDif
+				upRates[rateCounterIdx] = float64(currentUploadedSize-uploadedSize) / timeDif
 
 				downloadedSize = currentDownloadedSize
 				uploadedSize = currentUploadedSize
@@ -207,10 +208,10 @@ func (t *BTTorrent) watch() {
 				t.downloadRate = average(downRates)
 				t.uploadRate = average(upRates)
 
-				if rateCounter == lastRateCounterIdx {
-					rateCounter = 0
+				if rateCounterIdx == lenRateCounter-1 {
+					rateCounterIdx = 0
 				} else {
-					rateCounter++
+					rateCounterIdx++
 				}
 			}()
 
