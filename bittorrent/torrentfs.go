@@ -38,8 +38,8 @@ func NewFileReader(f *BTFile, sequential bool) (SeekableContent, error) {
 	reader := f.Torrent().NewReader()
 
 	if sequential {
-		// We read ahead 2% of the file continuously.
-		reader.SetReadahead(f.Length() / 50)
+		// We read ahead 1% of the file continuously.
+		reader.SetReadahead(f.Length() / 100)
 	}
 	reader.SetResponsive()
 	_, err := reader.Seek(f.Offset(), io.SeekStart)

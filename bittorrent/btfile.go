@@ -26,6 +26,10 @@ func (f *BTFile) Torrent() *BTTorrent {
 	return f.t
 }
 
+func (f *BTFile) State() []lt.FilePieceState {
+	return f.file.State()
+}
+
 func (f *BTFile) Path() string {
 	return f.file.Path()
 }
@@ -102,6 +106,13 @@ func (f *BTFile) getPiecesIndexes(off, length int64) (firstPieceIndex, endPieceI
 }
 
 func (f *BTFile) updateStats() {
+	/*f.bytesCompleted = 0
+	for _, p := range f.State() {
+		if p.Complete {
+			f.bytesCompleted += p.Bytes
+		}
+	}*/
+
 	f.bytesCompleted = f.file.BytesCompleted()
 	if f.isBuffering {
 		f.bufferBytesMissing = 0

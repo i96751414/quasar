@@ -104,17 +104,18 @@ type BTConfiguration struct {
 }
 
 type BTService struct {
-	db                *bolt.DB
-	client            *lt.Client
-	config            *BTConfiguration
-	log               *logging.Logger
-	dialogProgressBG  *xbmc.DialogProgressBG
-	clientConfig      *lt.ClientConfig
-	SpaceChecked      map[string]bool
-	MarkedToMove      int
-	UserAgent         string
-	closing           chan interface{}
-	Torrents          []*BTTorrent
+	db               *bolt.DB
+	client           *lt.Client
+	config           *BTConfiguration
+	log              *logging.Logger
+	ltLog            *logging.Logger
+	dialogProgressBG *xbmc.DialogProgressBG
+	clientConfig     *lt.ClientConfig
+	SpaceChecked     map[string]bool
+	MarkedToMove     int
+	UserAgent        string
+	closing          chan interface{}
+	Torrents         []*BTTorrent
 }
 
 type DBItem struct {
@@ -147,11 +148,11 @@ type activeTorrent struct {
 
 func NewBTService(conf BTConfiguration, db *bolt.DB) *BTService {
 	s := &BTService{
-		db:                db,
-		log:               logging.MustGetLogger("btservice"),
-		SpaceChecked:      make(map[string]bool, 0),
-		config:            &conf,
-		closing:           make(chan interface{}),
+		db:           db,
+		log:          logging.MustGetLogger("btservice"),
+		SpaceChecked: make(map[string]bool, 0),
+		config:       &conf,
+		closing:      make(chan interface{}),
 	}
 
 	if _, err := os.Stat(s.config.TorrentsPath); os.IsNotExist(err) {
@@ -278,7 +279,7 @@ func (s *BTService) configure() {
 	s.clientConfig.Seed = s.config.SeedTimeLimit > 0
 	s.clientConfig.NoUpload = s.config.SeedTimeLimit == 0
 
-	if s.config.LimitAfterBuffering == false {
+	if !s.config.LimitAfterBuffering {
 		if s.config.MaxDownloadRate > 0 {
 			s.clientConfig.DownloadRateLimiter = rate.NewLimiter(rate.Limit(s.config.MaxDownloadRate), DownloadRateBurst)
 		}
