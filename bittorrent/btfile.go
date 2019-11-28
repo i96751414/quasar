@@ -26,6 +26,10 @@ func (f *BTFile) Torrent() *BTTorrent {
 	return f.t
 }
 
+func (f *BTFile) NewReader() lt.Reader {
+	return f.file.NewReader()
+}
+
 func (f *BTFile) State() []lt.FilePieceState {
 	return f.file.State()
 }

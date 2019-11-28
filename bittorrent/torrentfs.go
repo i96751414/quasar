@@ -35,7 +35,7 @@ func (f *FileEntry) Seek(offset int64, whence int) (int64, error) {
 
 // NewFileReader sets up a torrent file for streaming reading.
 func NewFileReader(f *BTFile, sequential bool) (SeekableContent, error) {
-	reader := f.Torrent().NewReader()
+	reader := f.NewReader()
 
 	if sequential {
 		// We read ahead 1% of the file continuously.
