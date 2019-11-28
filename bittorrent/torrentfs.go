@@ -1,9 +1,7 @@
 package bittorrent
 
 import (
-	lt "github.com/anacrolix/torrent"
 	"github.com/op/go-logging"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,59 +10,20 @@ import (
 
 var tfsLog = logging.MustGetLogger("torrentfs")
 
-// SeekableContent describes an io.ReadSeeker that can be closed as well.
-type SeekableContent interface {
-	io.ReadSeeker
-	io.Closer
-}
-
-// FileEntry helps reading a torrent file.
-type FileEntry struct {
-	*BTFile
-	lt.Reader
-}
-
-func (f *FileEntry) Close() (err error) {
-	return f.Reader.Close()
-}
-
-// Seek seeks to the correct file position, paying attention to the offset.
-func (f *FileEntry) Seek(offset int64, whence int) (int64, error) {
-	return f.Reader.Seek(offset+f.BTFile.Offset(), whence)
-}
-
-// NewFileReader sets up a torrent file for streaming reading.
-func NewFileReader(f *BTFile, sequential bool) (SeekableContent, error) {
-	reader := f.NewReader()
-
-	if sequential {
-		// We read ahead 1% of the file continuously.
-		reader.SetReadahead(f.Length() / 100)
-	}
+func serveTorrent(file *BTFile, w http.ResponseWriter, r *http.Request) {
+	reader := file.NewReader()
+	// We read ahead 1% of the file continuously.
+	reader.SetReadahead(file.Length() / 100)
 	reader.SetResponsive()
-	_, err := reader.Seek(f.Offset(), io.SeekStart)
-
-	return &FileEntry{
-		BTFile: f,
-		Reader: reader,
-	}, err
-}
-
-func serveTorrent(file *BTFile, sequential bool, w http.ResponseWriter, r *http.Request) {
-	entry, err := NewFileReader(file, sequential)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 
 	defer func() {
-		if err := entry.Close(); err != nil {
+		if err := reader.Close(); err != nil {
 			tfsLog.Errorf("Error closing file reader: %s\n", err)
 		}
 	}()
 
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+file.Torrent().Name()+"\"")
-	http.ServeContent(w, r, file.DisplayPath(), time.Now(), entry)
+	http.ServeContent(w, r, file.DisplayPath(), time.Now(), reader)
 }
 
 func ServeTorrent(s *BTService, downloadPath string) http.Handler {
@@ -88,7 +47,7 @@ func ServeTorrent(s *BTService, downloadPath string) http.Handler {
 			for _, f := range torrent.Files() {
 				if path[1:] == f.Path() {
 					tfsLog.Noticef("%s belongs to torrent %s", path, torrent.Name())
-					serveTorrent(f, !isRarArchive(path), w, r)
+					serveTorrent(f, w, r)
 					return
 				}
 			}
