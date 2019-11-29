@@ -2,13 +2,15 @@ package bittorrent
 
 import (
 	lt "github.com/anacrolix/torrent"
+	"github.com/dustin/go-humanize"
 	"io"
 	"sync"
+	"time"
 )
 
-const sdBufferSize = 64 * 1024 // 64 KB
+const sdBufferSize = 256 * 1024 // 256 KB
 
-type DownloadStats interface {
+type Downloader interface {
 	Length() int64
 	BytesCompleted() int64
 	NewReader() lt.Reader
@@ -16,7 +18,7 @@ type DownloadStats interface {
 
 type SequentialDownloader struct {
 	sdReader      lt.Reader
-	stats         DownloadStats
+	downloader    Downloader
 	mu            *sync.RWMutex
 	closing       chan struct{}
 	pos           int64
@@ -24,14 +26,14 @@ type SequentialDownloader struct {
 	isDownloading bool
 }
 
-func NewSequentialDownloader(stats DownloadStats) *SequentialDownloader {
-	reader := stats.NewReader()
-	reader.SetReadahead(stats.Length() / 100)
+func NewSequentialDownloader(downloader Downloader) *SequentialDownloader {
+	reader := downloader.NewReader()
+	reader.SetReadahead(downloader.Length() / 100)
 
 	return &SequentialDownloader{
-		sdReader: reader,
-		stats:    stats,
-		mu:       &sync.RWMutex{},
+		sdReader:   reader,
+		downloader: downloader,
+		mu:         &sync.RWMutex{},
 	}
 }
 
@@ -76,33 +78,35 @@ func (sd *SequentialDownloader) setDownloading(isDownloading bool) {
 
 func (sd *SequentialDownloader) sequentialDownload(buf []byte) {
 	defer sd.setDownloading(false)
+	var total uint64
+	start := time.Now()
 
-	for sd.stats.Length() > sd.stats.BytesCompleted() {
-		select {
-		case <-sd.closing:
-			return
-		default:
-			if sd.posChanged {
-				sd.mu.Lock()
-				_, _ = sd.sdReader.Seek(sd.pos, io.SeekStart)
-				sd.posChanged = false
-				sd.mu.Unlock()
-			}
+	for sd.downloader.Length() > sd.downloader.BytesCompleted() {
+		if sd.posChanged {
+			sd.mu.Lock()
+			_, _ = sd.sdReader.Seek(sd.pos, io.SeekStart)
+			sd.posChanged = false
+			sd.mu.Unlock()
+		}
 
-			_, err := sd.sdReader.Read(buf)
-			if err != nil {
-				if err == io.EOF {
-					if !sd.posChanged {
-						_, _ = sd.sdReader.Seek(0, io.SeekStart)
-					}
-				} else {
-					log.Errorf("Sequential download error: %s", err.Error())
-					return
+		n, err := sd.sdReader.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				if !sd.posChanged {
+					log.Debugf("Sequential download seeking start")
+					_, _ = sd.sdReader.Seek(0, io.SeekStart)
 				}
+			} else {
+				log.Errorf("Sequential download error: %s", err.Error())
+				return
 			}
+		} else {
+			total += uint64(n)
 		}
 	}
-	log.Infof("Sequential download completed")
+	end := time.Since(start)
+	log.Infof("Sequential download completed in %s after downloading %s at an average of %s/s",
+		end, humanize.IBytes(total), humanize.IBytes(uint64(float64(total)/end.Seconds())))
 }
 
 type SequentialReader struct {
