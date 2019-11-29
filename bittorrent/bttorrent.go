@@ -117,10 +117,6 @@ func (t *BTTorrent) PieceStateRuns() []lt.PieceStateRun {
 	return t.torrent.PieceStateRuns()
 }
 
-func (t *BTTorrent) NewReader() lt.Reader {
-	return t.torrent.NewReader()
-}
-
 func (t *BTTorrent) BytesMissing() int64 {
 	return t.torrent.Length() - t.bytesCompleted
 }
@@ -305,19 +301,10 @@ func (t *BTTorrent) getState(file ...*BTFile) TorrentStatus {
 	if t.Stats().ActivePeers == 0 && progress == 0 {
 		return StatusFinding
 	}
-	buffering := false
 	for _, f := range file {
 		if f.isBuffering {
-			if f.GetBufferingProgress() < 100 {
-				buffering = true
-			} else {
-				f.isBuffering = false
-				f.Download()
-			}
+			return StatusBuffering
 		}
-	}
-	if buffering {
-		return StatusBuffering
 	}
 	if progress < 100 {
 		if t.downloadStarted {

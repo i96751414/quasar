@@ -5,14 +5,15 @@ import (
 )
 
 type BTFile struct {
-	file               *lt.File
-	t                  *BTTorrent
-	bufferPieces       []int
-	bufferSize         int64
-	markedForDownload  bool
-	isBuffering        bool
-	bytesCompleted     int64
-	bufferBytesMissing int64
+	file                 *lt.File
+	t                    *BTTorrent
+	bufferPieces         []int
+	bufferSize           int64
+	markedForDownload    bool
+	isBuffering          bool
+	bytesCompleted       int64
+	bufferBytesMissing   int64
+	sequentialDownloader *SequentialDownloader
 }
 
 func NewBTFile(f *lt.File, t *BTTorrent) *BTFile {
@@ -54,10 +55,26 @@ func (f *BTFile) BytesCompleted() int64 {
 	return f.bytesCompleted
 }
 
+func (f *BTFile) NewSequentialReader() *SequentialReader {
+	return &SequentialReader{
+		Reader: f.file.NewReader(),
+		sd:     &f.sequentialDownloader,
+	}
+}
+
 func (f *BTFile) Download() {
 	log.Debugf("Choosing file for download: %s", f.DisplayPath())
 	f.markedForDownload = true
 	f.file.SetPriority(lt.PiecePriorityNormal)
+}
+
+func (f *BTFile) SequentialDownload() {
+	log.Debugf("Choosing file for sequential download: %s", f.DisplayPath())
+	f.markedForDownload = true
+	if f.sequentialDownloader == nil {
+		f.sequentialDownloader = NewSequentialDownloader(f)
+	}
+	f.sequentialDownloader.Start()
 }
 
 func (f *BTFile) BufferAndDownload(startBufferSize, endBufferSize int64) {
@@ -105,7 +122,7 @@ func (f *BTFile) getPiecesIndexes(off, length int64) (firstPieceIndex, endPieceI
 	}
 	pieceLength := f.t.Info().PieceLength
 	firstPieceIndex = int((f.Offset() + off) / pieceLength)
-	endPieceIndex = int((f.Offset()+end-1)/pieceLength) + 1
+	endPieceIndex = int((f.Offset() + end) / pieceLength)
 	return
 }
 
