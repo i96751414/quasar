@@ -171,6 +171,10 @@ func main() {
 		w.Header().Set("Content-Type", "text/plain")
 		btService.PrintConnTrackerStatus(w)
 	})
+	http.HandleFunc("/debug/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		btService.PrintStatus(w)
+	})
 	http.HandleFunc("/shutdown", func(w http.ResponseWriter, r *http.Request) {
 		shutdown()
 	})

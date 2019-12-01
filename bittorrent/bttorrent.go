@@ -77,6 +77,10 @@ func NewBTTorrent(service *BTService, handle *lt.Torrent) *BTTorrent {
 	return t
 }
 
+func (t *BTTorrent) Closed() <-chan struct{} {
+	return t.torrent.Closed()
+}
+
 func (t *BTTorrent) GotInfo() <-chan struct{} {
 	return t.torrent.GotInfo()
 }

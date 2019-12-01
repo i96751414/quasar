@@ -340,6 +340,10 @@ func (s *BTService) PrintConnTrackerStatus(w io.Writer) {
 	s.clientConfig.ConnTracker.PrintStatus(w)
 }
 
+func (s *BTService) PrintStatus(w io.Writer) {
+	s.client.WriteStatus(w)
+}
+
 func (s *BTService) stopServices() {
 	if s.dialogProgressBG != nil {
 		s.dialogProgressBG.Close()

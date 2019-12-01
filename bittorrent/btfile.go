@@ -13,7 +13,7 @@ type BTFile struct {
 	isBuffering          bool
 	bytesCompleted       int64
 	bufferBytesMissing   int64
-	sequentialDownloader *SequentialDownloader
+	sequentialDownloader SequentialDownloader
 }
 
 func NewBTFile(f *lt.File, t *BTTorrent) *BTFile {
@@ -72,7 +72,9 @@ func (f *BTFile) SequentialDownload() {
 	log.Debugf("Choosing file for sequential download: %s", f.DisplayPath())
 	f.markedForDownload = true
 	if f.sequentialDownloader == nil {
-		f.sequentialDownloader = NewSequentialDownloader(f)
+		f.sequentialDownloader = NewSequentialReaderDownloader(f)
+		//s, e := f.getPiecesIndexes(0, f.Length())
+		//f.sequentialDownloader = NewSequentialPieceDownloader(f.t, s, e)
 	}
 	f.sequentialDownloader.Start()
 }
@@ -86,7 +88,7 @@ func (f *BTFile) BufferAndDownload(startBufferSize, endBufferSize int64) {
 		aFirstPieceIndex, aEndPieceIndex := f.getPiecesIndexes(0, startBufferSize)
 		for idx := aFirstPieceIndex; idx <= aEndPieceIndex; idx++ {
 			piece := f.t.torrent.Piece(idx)
-			piece.SetPriority(lt.PiecePriorityNow)
+			piece.SetPriority(lt.PiecePriorityHigh)
 			f.bufferSize += piece.Info().Length()
 			f.bufferPieces = append(f.bufferPieces, idx)
 		}
@@ -94,7 +96,7 @@ func (f *BTFile) BufferAndDownload(startBufferSize, endBufferSize int64) {
 		bFirstPieceIndex, bEndPieceIndex := f.getPiecesIndexes(f.Length()-endBufferSize, endBufferSize)
 		for idx := bFirstPieceIndex; idx <= bEndPieceIndex; idx++ {
 			piece := f.t.torrent.Piece(idx)
-			piece.SetPriority(lt.PiecePriorityNow)
+			piece.SetPriority(lt.PiecePriorityHigh)
 			f.bufferSize += piece.Info().Length()
 			f.bufferPieces = append(f.bufferPieces, idx)
 		}
@@ -102,7 +104,7 @@ func (f *BTFile) BufferAndDownload(startBufferSize, endBufferSize int64) {
 		firstPieceIndex, endPieceIndex := f.getPiecesIndexes(0, f.Length())
 		for idx := firstPieceIndex; idx <= endPieceIndex; idx++ {
 			piece := f.t.torrent.Piece(idx)
-			piece.SetPriority(lt.PiecePriorityNow)
+			piece.SetPriority(lt.PiecePriorityHigh)
 			f.bufferSize += piece.Info().Length()
 			f.bufferPieces = append(f.bufferPieces, idx)
 		}
