@@ -47,7 +47,7 @@ func NewCachedStorage(st storage.ClientImpl, bufferSize int64) storage.ClientImp
 	}
 }
 
-func (s *CachedStorage) flushOldest() (ok bool) {
+func (s *CachedStorage) flushOldest() {
 	var piece *CachedPiece
 	minCount := s.counter
 	for _, t := range s.torrents {
@@ -58,11 +58,10 @@ func (s *CachedStorage) flushOldest() (ok bool) {
 			}
 		}
 	}
-	if ok = piece != nil; ok {
-		//noinspection GoNilness
-		piece.flush()
+	if piece == nil {
+		panic("no more pieces to flush")
 	}
-	return
+	piece.flush()
 }
 
 func (s *CachedStorage) availableSize() int64 {
@@ -141,6 +140,7 @@ func (sp *CachedPiece) ReadAt(b []byte, off int64) (n int, err error) {
 	sp.torrent.mu.Lock()
 	defer sp.torrent.mu.Unlock()
 
+	var buf []byte
 	if sp.buf == nil {
 		if sp.torrent.bufferedPiece != sp {
 			if int64(len(sp.torrent.readBuffer)) != sp.length {
@@ -153,14 +153,16 @@ func (sp *CachedPiece) ReadAt(b []byte, off int64) (n int, err error) {
 				return sp.PieceImpl.ReadAt(b, off)
 			}
 		}
-		n = copy(b, sp.torrent.readBuffer[off:off+int64(len(b))])
+		buf = sp.torrent.readBuffer
 	} else {
-		n1, err := sp.getBufParameters(b, off)
-		if err != nil {
-			return 0, err
-		}
-		n = copy(b, sp.buf[off:off+n1])
+		buf = sp.buf
 	}
+
+	n1, err := sp.getBufParameters(b, off)
+	if err != nil {
+		return 0, err
+	}
+	n = copy(b, buf[off:off+n1])
 	return
 }
 
@@ -170,21 +172,21 @@ func (sp *CachedPiece) WriteAt(b []byte, off int64) (n int, err error) {
 
 	if sp.buf == nil {
 		for sp.length > sp.torrent.storage.availableSize() {
-			if !sp.torrent.storage.flushOldest() {
-				panic("no more pieces to flush")
-			}
+			sp.torrent.storage.flushOldest()
 		}
 
 		// If this is the piece being read buffered, clean it, as it is now buffered here
 		if sp.torrent.bufferedPiece == sp {
+			sp.buf = sp.torrent.readBuffer
+			sp.torrent.readBuffer = nil
 			sp.torrent.bufferedPiece = nil
+		} else {
+			sp.buf = make([]byte, sp.length)
+			if _, err := sp.PieceImpl.ReadAt(sp.buf, 0); err != nil && err != io.ErrUnexpectedEOF {
+				log.Errorf("Failed reading saved piece data: %s", err.Error())
+			}
 		}
-
-		sp.buf = make([]byte, sp.length)
 		sp.torrent.storage.len += sp.length
-		if _, err := sp.PieceImpl.ReadAt(sp.buf, 0); err != nil && err != io.ErrUnexpectedEOF {
-			log.Errorf("Failed reading saved piece data: %s", err.Error())
-		}
 	}
 
 	if sp.lastCount != sp.torrent.storage.counter {
@@ -196,7 +198,6 @@ func (sp *CachedPiece) WriteAt(b []byte, off int64) (n int, err error) {
 	if err != nil {
 		return 0, err
 	}
-
 	n = copy(sp.buf[off:off+n1], b)
 	return
 }
