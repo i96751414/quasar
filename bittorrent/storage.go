@@ -68,6 +68,12 @@ func (s *CachedStorage) availableSize() int64 {
 	return s.bufferSize - s.len
 }
 
+func (s *CachedStorage) flushIfNeeded() {
+	for s.availableSize() < 0 {
+		s.flushOldest()
+	}
+}
+
 func (s *CachedStorage) OpenTorrent(info *metainfo.Info, infoHash metainfo.Hash) (storage.TorrentImpl, error) {
 	torrent, err := s.ClientImpl.OpenTorrent(info, infoHash)
 	if err == nil {
@@ -169,12 +175,9 @@ func (sp *CachedPiece) ReadAt(b []byte, off int64) (n int, err error) {
 func (sp *CachedPiece) WriteAt(b []byte, off int64) (n int, err error) {
 	sp.torrent.mu.Lock()
 	defer sp.torrent.mu.Unlock()
+	defer sp.torrent.storage.flushIfNeeded()
 
 	if sp.buf == nil {
-		for sp.length > sp.torrent.storage.availableSize() {
-			sp.torrent.storage.flushOldest()
-		}
-
 		// If this is the piece being read buffered, clean it, as it is now buffered here
 		if sp.torrent.bufferedPiece == sp {
 			sp.buf = sp.torrent.readBuffer
